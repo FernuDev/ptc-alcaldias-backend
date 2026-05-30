@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ptc
+      POSTGRES_PASSWORD: ptc_secret
+      POSTGRES_DB: ptc_alcaldias
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptc -d ptc_alcaldias"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ptc:ptc_secret@db:5432/ptc_alcaldias
+      JWT_SECRET_KEY: dev-secret-change-in-production-at-least-64-chars-long-random-string
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      CORS_ORIGINS: '["http://localhost:3000"]'
+      APP_ENV: development
+      PYTHONPATH: /app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    volumes:
+      - .:/app
+
+volumes:
+  pgdata:
