@@ -18,6 +18,10 @@ dependencies = [
     "reportlab>=4.0,<5",
     "matplotlib>=3.9,<4",
     "openpyxl>=3.1,<4",
+    # ── Agente Institucional ──
+    "openai>=1.40,<2",            # cliente compatible para DeepSeek (y otros)
+    "chromadb>=0.5,<1",           # base vectorial local (RAG)
+    "sentence-transformers>=3,<4", # embeddings locales (arrastra torch, pesado)
 ]
 
 [project.optional-dependencies]

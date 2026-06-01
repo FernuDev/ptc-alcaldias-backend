@@ -19,6 +19,9 @@ from app.models.obra import (
 from app.models.notificacion import Notificacion
 from app.models.audit_log import AuditLog
 from app.models.refresh_token import RefreshToken
+from app.models.agente_interaccion import AgenteInteraccion
+from app.models.agente_accion import AgenteAccion
+from app.models.agente_documento import AgenteDocumento
 
 __all__ = [
     "Base",
@@ -44,4 +47,7 @@ __all__ = [
     "Notificacion",
     "AuditLog",
     "RefreshToken",
+    "AgenteInteraccion",
+    "AgenteAccion",
+    "AgenteDocumento",
 ]

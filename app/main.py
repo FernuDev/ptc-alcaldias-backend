@@ -2,10 +2,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from app.agente.llm.base import LLMError
 from app.core.config import settings
 from app.core.database import engine
 from app.routers import (
+    agente,
     audit,
     auth,
     categorias,
@@ -47,6 +50,15 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(LLMError)
+async def llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
+    # Fallo del motor LLM (saldo, red, autenticación): respuesta clara, no 500.
+    return JSONResponse(
+        status_code=502,
+        content={"detail": f"El motor LLM no está disponible: {exc}"},
+    )
+
+
 # Security headers middleware
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -79,3 +91,4 @@ app.include_router(stats.router, prefix=PREFIX)
 app.include_router(notificaciones.router, prefix=PREFIX)
 app.include_router(exports.router, prefix=PREFIX)
 app.include_router(audit.router, prefix=PREFIX)
+app.include_router(agente.router, prefix=PREFIX)

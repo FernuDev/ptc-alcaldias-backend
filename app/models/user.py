@@ -29,6 +29,8 @@ class User(TimestampMixin, Base):
     avatar_tone: Mapped[str | None] = mapped_column(String(7))
     password_hash: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Habilita el acceso a conocimiento de nivel "reservado" en el Agente Institucional.
+    puede_ver_reservado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     tenant = relationship("Tenant", back_populates="users", lazy="selectin")
     areas = relationship("Categoria", secondary=user_areas, lazy="selectin")
