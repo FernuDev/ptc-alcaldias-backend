@@ -9,3 +9,7 @@ build/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+
+# Agente Institucional · RAG (base vectorial y caché de modelos locales)
+data/chroma/
+.cache/

@@ -26,6 +26,15 @@ services:
       CORS_ORIGINS: '["http://localhost:3000"]'
       APP_ENV: development
       PYTHONPATH: /app
+      # ── Agente Institucional ──
+      # LLM real (DeepSeek): la key se interpola desde el archivo .env.
+      # Embeddings 'fake' (los vectores demo ya ingestados son fake); para
+      # embeddings reales: EMBEDDING_PROVIDER=local + sentence-transformers + re-ingesta.
+      LLM_PROVIDER: deepseek
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      EMBEDDING_PROVIDER: fake
+      VECTOR_DB_PATH: /app/data/chroma
+      KNOWLEDGE_PATH: /app/data/seed/knowledge
     ports:
       - "8000:8000"
     depends_on:

@@ -1107,7 +1107,7 @@ async def seed_all():
 
     async with Session() as session:
         # ── 1. Audit log immutability trigger ──────────────────────────────
-        print("[1/10] Audit log immutability trigger...")
+        print("[1/11] Audit log immutability trigger...")
         await session.execute(text("""
             CREATE OR REPLACE FUNCTION prevent_audit_modification()
             RETURNS TRIGGER AS $$
@@ -1126,7 +1126,7 @@ async def seed_all():
         await session.commit()
 
         # ── 2. Tenants ────────────────────────────────────────────────────
-        print("[2/10] Seeding tenants...")
+        print("[2/11] Seeding tenants...")
         for t in TENANTS:
             await session.execute(text("""
                 INSERT INTO tenants (id, nombre, nombre_corto, clave_geo, acronimo,
@@ -1145,7 +1145,7 @@ async def seed_all():
         print(f"         {len(TENANTS)} tenants")
 
         # ── 3. Categorias ─────────────────────────────────────────────────
-        print("[3/10] Seeding categorias...")
+        print("[3/11] Seeding categorias...")
         for cat in CATEGORIAS:
             await session.execute(text("""
                 INSERT INTO categorias (id, label, color, icono, peso)
@@ -1156,7 +1156,7 @@ async def seed_all():
         print(f"         {len(CATEGORIAS)} categorias")
 
         # ── 4. Obra categorias ────────────────────────────────────────────
-        print("[4/10] Seeding obra_categorias...")
+        print("[4/11] Seeding obra_categorias...")
         for oc in OBRA_CATEGORIAS:
             await session.execute(text("""
                 INSERT INTO obra_categorias (id, label, color, peso)
@@ -1167,7 +1167,7 @@ async def seed_all():
         print(f"         {len(OBRA_CATEGORIAS)} obra categorias")
 
         # ── 5. Contratistas ───────────────────────────────────────────────
-        print("[5/10] Seeding contratistas...")
+        print("[5/11] Seeding contratistas...")
         for ct in CONTRATISTAS:
             await session.execute(text("""
                 INSERT INTO contratistas (id, razon_social, rfc, calificacion)
@@ -1178,7 +1178,7 @@ async def seed_all():
         print(f"         {len(CONTRATISTAS)} contratistas")
 
         # ── 6. Colonias ──────────────────────────────────────────────────
-        print("[6/10] Seeding colonias...")
+        print("[6/11] Seeding colonias...")
         for col in ALL_COLONIAS:
             await session.execute(text("""
                 INSERT INTO colonias (id, tenant_id, nombre, tipo,
@@ -1195,7 +1195,7 @@ async def seed_all():
         print(f"         {len(ALL_COLONIAS)} colonias ({len(COLONIAS_MC)} MC + {len(COLONIAS_TL)} TL)")
 
         # ── 7. Users ─────────────────────────────────────────────────────
-        print("[7/10] Seeding users...")
+        print("[7/11] Seeding users...")
         user_area_rows = []
         for u in USERS:
             password = f"{u['id']}.2026"
@@ -1229,7 +1229,7 @@ async def seed_all():
         print(f"         {len(USERS)} users, {len(user_area_rows)} user_areas")
 
         # ── 8. Cuadrillas ────────────────────────────────────────────────
-        print("[8/10] Seeding cuadrillas...")
+        print("[8/11] Seeding cuadrillas...")
         cuadrilla_esp_rows = []
         tenant_prefixes = [("magdalena-contreras", "MC"), ("tlalpan", "TL")]
         cuadrilla_count = 0
@@ -1261,7 +1261,7 @@ async def seed_all():
         print(f"         {cuadrilla_count} cuadrillas, {len(cuadrilla_esp_rows)} especialidades")
 
         # ── 9. Obras ─────────────────────────────────────────────────────
-        print("[9/10] Generating and seeding obras...")
+        print("[9/11] Generating and seeding obras...")
         obras_mc = generate_obras_for_tenant("magdalena-contreras", OBRAS_SEED, OBRAS_TOTAL_MC)
         obras_tl = generate_obras_for_tenant("tlalpan", OBRAS_SEED + 11, OBRAS_TOTAL_TL)
         all_obras = obras_mc + obras_tl
@@ -1368,7 +1368,7 @@ async def seed_all():
         print(f"         {len(all_obras)} obras ({len(obras_mc)} MC + {len(obras_tl)} TL)")
 
         # ── 10. Reportes ──────────────────────────────────────────────────
-        print("[10/10] Generating and seeding reportes...")
+        print("[10/11] Generating and seeding reportes...")
         reportes_mc = generate_reportes_for_tenant("magdalena-contreras", REPORTES_SEED, REPORTES_TOTAL_MC)
         reportes_tl = generate_reportes_for_tenant("tlalpan", REPORTES_SEED + 31, REPORTES_TOTAL_TL)
         all_reportes = reportes_mc + reportes_tl
@@ -1446,8 +1446,128 @@ async def seed_all():
         await session.commit()
         print(f"         {len(all_links)} reporte-obra links")
 
+        # ── 11. Notificaciones ────────────────────────────────────────────
+        print("[11/11] Generating and seeding notificaciones...")
+        all_notifs = generate_notificaciones(USERS, all_reportes, all_obras)
+        for n in all_notifs:
+            await session.execute(text("""
+                INSERT INTO notificaciones (id, user_id, tenant_id, tipo, titulo, cuerpo,
+                    href, entity_type, entity_id, leida, fecha)
+                VALUES (:id, :user_id, :tenant_id, :tipo, :titulo, :cuerpo,
+                    :href, :entity_type, :entity_id, false, :fecha)
+                ON CONFLICT (id) DO NOTHING
+            """), n)
+        await session.commit()
+        print(f"         {len(all_notifs)} notificaciones")
+
     await engine.dispose()
     print("\nSeed complete.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Notificaciones generator
+# Materialises the SLA / new-report / obra-closure rules that the frontend bell
+# used to compute client-side, but per-user and scoped to each user's tenant +
+# areas (admins see everything in their tenant; directors only their areas).
+# ═══════════════════════════════════════════════════════════════════════════
+
+# director areas -> obra categories they may also see
+# (kept in sync with app/services/reporte_service.py and obra_service.py)
+CATEGORIA_TO_OBRA_NOTIF = {
+    "bacheo": ["pavimentacion", "vialidad"],
+    "alumbrado": ["alumbrado"],
+    "limpia": ["imagen_urbana"],
+    "seguridad": [],
+    "agua": ["agua_potable", "drenaje"],
+    "parques": ["parques"],
+    "arboles": ["parques"],
+    "drenaje": ["drenaje"],
+    "semaforos": ["vialidad"],
+    "comercio_vp": ["imagen_urbana"],
+}
+
+
+def generate_notificaciones(users: list[dict], all_reportes: list[dict], all_obras: list[dict]) -> list[dict]:
+    """Build up to 10 notifications per user, mirroring the frontend bell logic."""
+    notifs: list[dict] = []
+
+    for u in users:
+        tenant_id = u["tenant_id"]
+        is_admin = u["role"] == "admin" or not u["areas"]
+        areas = set(u["areas"])
+        obra_cats: set[str] = set()
+        for a in u["areas"]:
+            obra_cats.update(CATEGORIA_TO_OBRA_NOTIF.get(a, []))
+
+        # Visible items for this user, preserving generation order
+        vis_reportes = [
+            r for r in all_reportes
+            if r["tenant_id"] == tenant_id and (is_admin or r["categoria_id"] in areas)
+        ]
+        vis_obras = [
+            o for o in all_obras
+            if o["tenant_id"] == tenant_id and (is_admin or o["categoria_id"] in obra_cats)
+        ]
+
+        user_notifs: list[dict] = []
+
+        # 1. SLA alerts (up to 4): unattended high/critical reports
+        alert_count = 0
+        for r in vis_reportes[:80]:
+            if r["estado"] in ("nuevo", "asignado") and r["prioridad"] in ("critica", "alta"):
+                titulo = (
+                    "Reporte crítico sin atender"
+                    if r["prioridad"] == "critica"
+                    else "Reporte de alta prioridad sin atender"
+                )
+                user_notifs.append({
+                    "id": f"{u['id']}-sla-{r['id']}",
+                    "tipo": "alerta",
+                    "titulo": titulo,
+                    "cuerpo": f"{r['titulo']} · {r['colonia_nombre']}",
+                    "href": f"/backoffice/reportes/{r['id']}",
+                    "entity_type": "reporte",
+                    "entity_id": r["id"],
+                    "fecha": r["fecha_creacion"],
+                })
+                alert_count += 1
+                if alert_count >= 4:
+                    break
+
+        # 2. New reports (first 3)
+        for r in vis_reportes[:3]:
+            user_notifs.append({
+                "id": f"{u['id']}-nuevo-{r['id']}",
+                "tipo": "reporte",
+                "titulo": "Nuevo reporte recibido",
+                "cuerpo": f"{r['titulo']} · {r['colonia_nombre']}",
+                "href": f"/backoffice/reportes/{r['id']}",
+                "entity_type": "reporte",
+                "entity_id": r["id"],
+                "fecha": r["fecha_creacion"],
+            })
+
+        # 3. Obra closures (up to 3)
+        cierres = [o for o in vis_obras if o["estado"] in ("concluida", "en_cierre")][:3]
+        for o in cierres:
+            concluida = o["estado"] == "concluida"
+            user_notifs.append({
+                "id": f"{u['id']}-obra-{o['id']}",
+                "tipo": "cierre" if concluida else "obra",
+                "titulo": "Obra concluida" if concluida else "Obra entrando en cierre",
+                "cuerpo": o["nombre"],
+                "href": f"/backoffice/obras/{o['id']}",
+                "entity_type": "obra",
+                "entity_id": o["id"],
+                "fecha": o["fecha_fin_real"] or o["fecha_inicio"],
+            })
+
+        # 4. Newest first, keep top 10
+        user_notifs.sort(key=lambda n: n["fecha"], reverse=True)
+        for n in user_notifs[:10]:
+            notifs.append({**n, "user_id": u["id"], "tenant_id": tenant_id})
+
+    return notifs
 
 
 def main():
