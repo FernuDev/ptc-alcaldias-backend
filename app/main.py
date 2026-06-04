@@ -12,6 +12,7 @@ from app.routers import (
     audit,
     auth,
     categorias,
+    civico,
     colonias,
     contratistas,
     cuadrillas,
@@ -92,3 +93,4 @@ app.include_router(notificaciones.router, prefix=PREFIX)
 app.include_router(exports.router, prefix=PREFIX)
 app.include_router(audit.router, prefix=PREFIX)
 app.include_router(agente.router, prefix=PREFIX)
+app.include_router(civico.router, prefix=PREFIX)

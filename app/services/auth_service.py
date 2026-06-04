@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditLogger
 from app.core.config import settings
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import ConflictError, UnauthorizedError
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -16,7 +16,7 @@ from app.core.security import (
 )
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.schemas.auth import ChangePasswordRequest, UserBrief
+from app.schemas.auth import ChangePasswordRequest, RegisterRequest, UserBrief
 
 
 async def authenticate(
@@ -180,6 +180,73 @@ async def logout(
         user_id=user_id,
         entity_type="session",
     )
+
+
+async def register_ciudadano(
+    data: RegisterRequest,
+    db: AsyncSession,
+    audit: AuditLogger,
+) -> tuple[str, str, UserBrief]:
+    """Registra un ciudadano nuevo. Devuelve (access_token, refresh_token, user_brief)."""
+    # Verificar que el email no esté en uso.
+    result = await db.execute(select(User).where(User.email == data.email))
+    if result.scalar_one_or_none() is not None:
+        raise ConflictError("Ya existe una cuenta con este correo")
+
+    # Generar id e iniciales.
+    user_id = f"c-{uuid.uuid4().hex[:12]}"
+    partes = data.nombre.strip().split()
+    iniciales = "".join(p[0].upper() for p in partes[:2]) if partes else "C"
+
+    user = User(
+        id=user_id,
+        tenant_id=data.tenant_id,
+        email=data.email,
+        nombre=data.nombre.strip(),
+        iniciales=iniciales,
+        cargo="Ciudadano",
+        role="ciudadano",
+        password_hash=hash_password(data.password),
+    )
+    db.add(user)
+    await db.flush()
+
+    area_ids: list[str] = []
+    access_token = create_access_token(user.id, user.tenant_id, user.role, area_ids)
+    raw_refresh, refresh_hash = create_refresh_token()
+
+    family_id = uuid.uuid4()
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=refresh_hash,
+        family_id=family_id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ip_address=audit.ip_address,
+        user_agent=audit.user_agent,
+    )
+    db.add(rt)
+
+    await audit.log(
+        action="register",
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        entity_type="user",
+        entity_id=user.id,
+    )
+
+    user_brief = UserBrief(
+        id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        nombre=user.nombre,
+        iniciales=user.iniciales,
+        cargo=user.cargo,
+        role=user.role,
+        areas=area_ids,
+        avatar_tone=None,
+    )
+
+    return access_token, raw_refresh, user_brief
 
 
 async def change_password(

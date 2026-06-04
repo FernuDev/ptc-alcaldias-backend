@@ -6,11 +6,19 @@ from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
     RefreshResponse,
+    RegisterRequest,
     TokenResponse,
 )
 from app.services import auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/register", response_model=TokenResponse)
+async def register(data: RegisterRequest, db: DB, audit: Audit):
+    """Registro público de ciudadanos."""
+    access, refresh, user_brief = await auth_service.register_ciudadano(data, db, audit)
+    return TokenResponse(access_token=access, refresh_token=refresh, user=user_brief)
 
 
 @router.post("/login", response_model=TokenResponse)

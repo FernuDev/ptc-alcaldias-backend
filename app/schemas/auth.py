@@ -40,4 +40,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=100)
 
 
+class RegisterRequest(BaseModel):
+    """Registro público de ciudadano."""
+
+    email: EmailStr
+    nombre: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=8, max_length=100)
+    tenant_id: str = Field(default="magdalena-contreras", max_length=50)
+
+
 TokenResponse.model_rebuild()

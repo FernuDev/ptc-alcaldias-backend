@@ -25,7 +25,7 @@ class User(TimestampMixin, Base):
     nombre: Mapped[str] = mapped_column(String(120))
     iniciales: Mapped[str] = mapped_column(String(5))
     cargo: Mapped[str] = mapped_column(String(200))
-    role: Mapped[str] = mapped_column(String(20))  # admin | director_area
+    role: Mapped[str] = mapped_column(String(20))  # admin | director_area | ciudadano
     avatar_tone: Mapped[str | None] = mapped_column(String(7))
     password_hash: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

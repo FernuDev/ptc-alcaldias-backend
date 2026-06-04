@@ -13,3 +13,5 @@ build/
 # Agente Institucional · RAG (base vectorial y caché de modelos locales)
 data/chroma/
 .cache/
+
+.DS_Store

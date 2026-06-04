@@ -22,7 +22,7 @@ class UserCreate(BaseModel):
     nombre: str = Field(max_length=120)
     iniciales: str = Field(max_length=5)
     cargo: str = Field(max_length=200)
-    role: str = Field(pattern=r"^(admin|director_area)$")
+    role: str = Field(pattern=r"^(admin|director_area|ciudadano)$")
     areas: list[str] = []
     avatar_tone: str | None = Field(None, max_length=7)
     password: str = Field(min_length=8, max_length=100)
@@ -31,7 +31,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     nombre: str | None = Field(None, max_length=120)
     cargo: str | None = Field(None, max_length=200)
-    role: str | None = Field(None, pattern=r"^(admin|director_area)$")
+    role: str | None = Field(None, pattern=r"^(admin|director_area|ciudadano)$")
     areas: list[str] | None = None
     avatar_tone: str | None = Field(None, max_length=7)
     is_active: bool | None = None
