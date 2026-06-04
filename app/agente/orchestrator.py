@@ -158,25 +158,40 @@ def _fuentes_tools(usadas: list[str]) -> list[Fuente]:
     return out
 
 
+# Herramientas cuyos datos sirven para redactar una respuesta de contenido
+# (no de navegación). Si el modelo deflecta al botón teniendo estos datos, se
+# fuerza un resumen con la red de seguridad (`_forzar_resumen`).
+_TOOLS_DATOS = ("consultar_reporte", "consultar_obra", "buscar_reportes", "metricas")
+
+# Frases típicas de "no-respuesta" que solo remiten al botón/detalle.
+_DEFLEXION_KW = (
+    "botón", "boton", "ve al detalle", "ir al detalle", "al detalle",
+    "puedes acceder", "accede al detalle", "aparece en pantalla",
+    "consulta el detalle", "revisa el detalle", "en la pantalla",
+)
+
+
 async def _loop_tools(
     llm: LLMClient,
     mensajes: list[Message],
     user: User,
     db: AsyncSession,
     tools_schema: list[dict],
-) -> tuple[str, list[str], list[Navegacion], list[dict]]:
+) -> tuple[str, list[str], list[Navegacion], list[dict], list[dict]]:
     """Ciclo de tool-calling: el modelo pide herramientas, se ejecutan con el
     alcance del usuario y se le devuelven, hasta que produce una respuesta final.
-    Devuelve (texto_final, herramientas_usadas, navegaciones, acciones_preparadas)."""
+    Devuelve (texto_final, herramientas_usadas, navegaciones, acciones_preparadas,
+    datos_consulta)."""
     usadas: list[str] = []
     navegaciones: list[Navegacion] = []
     acciones: list[dict] = []
+    datos_consulta: list[dict] = []
     for _ in range(MAX_TOOL_ROUNDS):
         # Si se usó diagnostico, dar más tokens para la respuesta final.
         extra_tokens = {"max_tokens": 4000} if "diagnostico" in usadas else {}
         res = await llm.complete(mensajes, tools=tools_schema, **extra_tokens)
         if not res.tool_calls:
-            return res.content or "", usadas, navegaciones, acciones
+            return res.content or "", usadas, navegaciones, acciones, datos_consulta
 
         mensajes.append(
             {
@@ -203,11 +218,14 @@ async def _loop_tools(
                 navegaciones.append(Navegacion(**salida["navegacion"]))
             if isinstance(salida, dict) and salida.get("accion_preparada"):
                 acciones.append(salida)
+            # Guardar datos de consulta útiles para la red de seguridad.
+            if tc.name in _TOOLS_DATOS and isinstance(salida, dict):
+                datos_consulta.append({"tool": tc.name, "datos": salida})
             # El diagnóstico genera su propio análisis narrativo via LLM.
             # Lo usamos directamente como respuesta para evitar que el modelo
             # principal lo colapse a una línea.
             if tc.name == "diagnostico" and isinstance(salida, dict) and salida.get("analisis"):
-                return salida["analisis"], usadas, navegaciones, acciones
+                return salida["analisis"], usadas, navegaciones, acciones, datos_consulta
             mensajes.append(
                 {
                     "role": "tool",
@@ -218,7 +236,40 @@ async def _loop_tools(
 
     # Límite alcanzado: forzar respuesta final sin más herramientas.
     res = await llm.complete(mensajes)
-    return res.content or "", usadas, navegaciones, acciones
+    return res.content or "", usadas, navegaciones, acciones, datos_consulta
+
+
+def _es_deflexion(texto: str, datos: list[dict]) -> bool:
+    """True si hay datos de consulta pero el texto no es una respuesta real
+    (vacío, demasiado breve o solo remite al botón/detalle)."""
+    if not datos:
+        return False
+    limpio = (texto or "").strip()
+    if len(limpio) < 60:
+        return True
+    bajo = limpio.lower()
+    return any(kw in bajo for kw in _DEFLEXION_KW)
+
+
+async def _forzar_resumen(
+    llm: LLMClient, mensajes: list[Message], datos: list[dict]
+) -> str:
+    """Red de seguridad: re-pide al modelo un resumen en texto usando los datos
+    reales ya obtenidos, sin herramientas y sin remitir a botones."""
+    datos_json = json.dumps(datos, ensure_ascii=False, default=str)
+    nudge: Message = {
+        "role": "system",
+        "content": (
+            "Tu respuesta anterior NO incluyó la información solicitada. Con los "
+            "DATOS REALES de las herramientas que aparecen abajo, redacta AHORA la "
+            "respuesta en texto: un resumen claro y directo (estado, prioridad, "
+            "categoría, colonia, cuadrilla, fechas y lo relevante según el caso). "
+            "PROHIBIDO remitir a botones, enlaces o 've al detalle': el texto ES la "
+            "respuesta.\n\nDATOS:\n" + datos_json
+        ),
+    }
+    res = await llm.complete([*mensajes, nudge])
+    return res.content or ""
 
 
 async def _registrar(
@@ -265,9 +316,14 @@ async def responder_chat(
 
     frags = recuperar(ctx, mensaje, store=store)
     mensajes = construir_mensajes(ctx, mensaje, historial, frags)
-    texto, usadas, navegacion, acciones = await _loop_tools(
+    texto, usadas, navegacion, acciones, datos = await _loop_tools(
         llm, mensajes, user, db, tools_schema
     )
+
+    # Red de seguridad: si el modelo deflectó al botón teniendo datos reales,
+    # forzar un resumen en texto.
+    if _es_deflexion(texto, datos):
+        texto = await _forzar_resumen(llm, mensajes, datos)
 
     fuentes = _fuentes(frags) + _fuentes_tools(usadas)
     sin_info = len(frags) == 0 and len(usadas) == 0
@@ -305,9 +361,12 @@ async def stream_chat(
 
     frags = recuperar(ctx, mensaje, store=store)
     mensajes = construir_mensajes(ctx, mensaje, historial, frags)
-    texto, usadas, navegacion, acciones = await _loop_tools(
+    texto, usadas, navegacion, acciones, datos = await _loop_tools(
         llm, mensajes, user, db, tools_schema
     )
+
+    if _es_deflexion(texto, datos):
+        texto = await _forzar_resumen(llm, mensajes, datos)
 
     for parte in re.findall(r"\S+\s*", texto):
         yield {"delta": parte}
