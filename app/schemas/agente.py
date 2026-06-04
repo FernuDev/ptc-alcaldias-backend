@@ -36,11 +36,21 @@ class Navegacion(BaseModel):
     titulo: str
 
 
+class AccionPendiente(BaseModel):
+    """Acción preparada por el agente, pendiente de confirmación humana."""
+
+    accion_id: str
+    descripcion: str
+    payload: dict
+    requiere_confirmacion: bool = True
+
+
 class ChatResponse(BaseModel):
     respuesta: str
     fuentes: list[Fuente] = []
     sin_informacion: bool = False
     navegacion: list[Navegacion] = []
+    acciones: list[dict] = []
 
 
 # ─── Clasificación de reportes ─────────────────────────────────────────────
@@ -125,6 +135,26 @@ class AnalyticsResponse(BaseModel):
     datos: Any | None = None
     resumen: str | None = None
     disponibles: dict[str, str] = {}
+
+
+# ─── Conversaciones (historial de chats) ──────────────────────────────────
+
+
+class ConversacionResumen(BaseModel):
+    id: str
+    titulo: str
+    created_at: Any
+    updated_at: Any
+
+
+class ConversacionDetalle(ConversacionResumen):
+    mensajes: list[dict]
+
+
+class ConversacionSaveRequest(BaseModel):
+    conversacion_id: str | None = None
+    titulo: str | None = None
+    mensajes: list[dict]
 
 
 # ─── Health ────────────────────────────────────────────────────────────────

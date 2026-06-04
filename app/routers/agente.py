@@ -28,6 +28,9 @@ from app.schemas.agente import (
     ClassifyResponse,
     ConfirmActionRequest,
     ConfirmActionResponse,
+    ConversacionDetalle,
+    ConversacionResumen,
+    ConversacionSaveRequest,
     IngestDocRequest,
     IngestResponse,
     PrepareActionRequest,
@@ -162,3 +165,106 @@ async def confirm_action(
 ) -> ConfirmActionResponse:
     ctx = derive_contexto(user)
     return await actions.confirmar_accion(db, ctx, user, req.accion_id, audit)
+
+
+# ─── Conversaciones (historial de chats) ──────────────────────────────────
+
+from datetime import UTC, datetime
+
+from app.models.agente_conversacion import AgenteConversacion
+
+
+@router.get("/conversations", response_model=list[ConversacionResumen])
+async def list_conversations(user: CurrentUser, db: DB) -> list[ConversacionResumen]:
+    """Lista las conversaciones del usuario, más recientes primero."""
+    result = await db.execute(
+        select(AgenteConversacion)
+        .where(AgenteConversacion.user_id == user.id)
+        .order_by(AgenteConversacion.updated_at.desc())
+        .limit(50)
+    )
+    return [
+        ConversacionResumen(
+            id=c.id, titulo=c.titulo,
+            created_at=c.created_at, updated_at=c.updated_at,
+        )
+        for c in result.scalars().all()
+    ]
+
+
+@router.get("/conversations/{conv_id}", response_model=ConversacionDetalle)
+async def get_conversation(conv_id: str, user: CurrentUser, db: DB) -> ConversacionDetalle:
+    result = await db.execute(
+        select(AgenteConversacion).where(
+            AgenteConversacion.id == conv_id,
+            AgenteConversacion.user_id == user.id,
+        )
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Conversación", conv_id)
+    return ConversacionDetalle(
+        id=conv.id, titulo=conv.titulo, mensajes=conv.mensajes,
+        created_at=conv.created_at, updated_at=conv.updated_at,
+    )
+
+
+@router.post("/conversations", response_model=ConversacionDetalle, status_code=201)
+async def save_conversation(
+    req: ConversacionSaveRequest, user: CurrentUser, db: DB
+) -> ConversacionDetalle:
+    """Crea o actualiza una conversación."""
+    if req.conversacion_id:
+        result = await db.execute(
+            select(AgenteConversacion).where(
+                AgenteConversacion.id == req.conversacion_id,
+                AgenteConversacion.user_id == user.id,
+            )
+        )
+        conv = result.scalar_one_or_none()
+        if conv:
+            conv.mensajes = req.mensajes
+            conv.updated_at = datetime.now(UTC)
+            if req.titulo:
+                conv.titulo = req.titulo
+            await db.flush()
+            return ConversacionDetalle(
+                id=conv.id, titulo=conv.titulo, mensajes=conv.mensajes,
+                created_at=conv.created_at, updated_at=conv.updated_at,
+            )
+
+    # Generar título a partir del primer mensaje del usuario.
+    titulo = req.titulo
+    if not titulo:
+        primer_msg = next((m["content"] for m in req.mensajes if m.get("role") == "user"), "")
+        titulo = (primer_msg[:80] + "…") if len(primer_msg) > 80 else (primer_msg or "Chat")
+
+    conv = AgenteConversacion(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        titulo=titulo,
+        mensajes=req.mensajes,
+    )
+    db.add(conv)
+    await db.flush()
+    return ConversacionDetalle(
+        id=conv.id, titulo=conv.titulo, mensajes=conv.mensajes,
+        created_at=conv.created_at, updated_at=conv.updated_at,
+    )
+
+
+@router.delete("/conversations/{conv_id}")
+async def delete_conversation(conv_id: str, user: CurrentUser, db: DB) -> dict:
+    result = await db.execute(
+        select(AgenteConversacion).where(
+            AgenteConversacion.id == conv_id,
+            AgenteConversacion.user_id == user.id,
+        )
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Conversación", conv_id)
+    await db.delete(conv)
+    return {"detail": "Conversación eliminada"}

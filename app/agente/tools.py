@@ -1,4 +1,5 @@
-"""Herramientas que el LLM puede invocar para consultar datos en vivo.
+"""Herramientas que el LLM puede invocar para consultar datos en vivo y
+preparar acciones con confirmación humana.
 
 Cada herramienta se ejecuta SIEMPRE con el `User` autenticado, delegando en los
 services existentes (reporte/obra/stats) que ya aplican el filtro por tenant +
@@ -8,17 +9,32 @@ un folio de otra área/tenant, la herramienta responde "sin coincidencias".
 
 from typing import Any
 
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agente import analytics
+from app.agente.context import RolConceptual, UsuarioContexto, derive_contexto
+from app.models.colonia import Colonia
+from app.models.contratista import Contratista
+from app.models.cuadrilla import Cuadrilla
 from app.models.user import User
-from app.schemas.obra import ObraRead
+from app.schemas.obra import ObraCreate, ObraRead
 from app.schemas.reporte import ReporteRead
 from app.services import obra_service, reporte_service
 
+# ─── Permisos por rol ─────────────────────────────────────────────────────
+
+# Acciones que cada rol conceptual puede ejecutar via el agente.
+_ACCIONES_POR_ROL: dict[RolConceptual, set[str]] = {
+    "operador": {"cambiar_estado"},
+    "supervisor": {"cambiar_estado", "asignar", "turnar"},
+    "director": {"cambiar_estado", "asignar", "turnar", "cerrar", "crear_obra"},
+    "administrador": {"cambiar_estado", "asignar", "turnar", "cerrar", "crear_obra"},
+}
+
 # ─── Esquemas de herramientas (formato OpenAI tools) ───────────────────────
 
-TOOLS_SCHEMA: list[dict] = [
+_TOOLS_LECTURA: list[dict] = [
     {
         "type": "function",
         "function": {
@@ -77,7 +93,9 @@ TOOLS_SCHEMA: list[dict] = [
             "name": "navegar",
             "description": (
                 "Genera un enlace para abrir una pantalla del sistema (el usuario lo pulsa). "
-                "Úsalo cuando pidan ver/ir a una pantalla, o al detalle de un reporte u obra."
+                "Úsalo cuando pidan ver/ir a una pantalla, o al detalle de un reporte u obra. "
+                "Úsalo también de forma proactiva cuando respondas sobre un reporte u obra "
+                "para ofrecer acceso al detalle."
             ),
             "parameters": {
                 "type": "object",
@@ -114,7 +132,145 @@ TOOLS_SCHEMA: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "diagnostico",
+            "description": (
+                "Ejecuta un diagnóstico completo del estado de la alcaldía: KPIs, "
+                "distribución por categoría y estado, top colonias, SLA, ranking de "
+                "cuadrillas, costos y actividad reciente. Úsalo cuando el usuario pida "
+                "un análisis general, recomendaciones, opinión sobre qué mejorar, o "
+                "panorama de la situación de la alcaldía."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
+
+_TOOL_PREPARAR_ACCION: dict = {
+    "type": "function",
+    "function": {
+        "name": "preparar_accion",
+        "description": (
+            "Prepara una acción sobre un reporte u obra que REQUIERE confirmación humana. "
+            "Nunca muta el sistema directamente: crea una propuesta pendiente que el "
+            "funcionario puede confirmar o rechazar. Tipos: asignar (turnar a cuadrilla/"
+            "contratista), cambiar_estado, cerrar."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tipo": {
+                    "type": "string",
+                    "enum": ["asignar", "turnar", "cambiar_estado", "cerrar"],
+                    "description": "Tipo de acción a preparar.",
+                },
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["reporte", "obra"],
+                },
+                "entity_id": {
+                    "type": "string",
+                    "description": "ID del reporte u obra (no folio). Usa el id devuelto por consultar_reporte/obra.",
+                },
+                "params": {
+                    "type": "object",
+                    "description": (
+                        "Parámetros de la acción. Para asignar reporte: {cuadrilla_id: 'MC-C01'}. "
+                        "Para asignar obra: {contratista_id: '...'}. "
+                        "Para cambiar_estado: {estado: 'en_proceso'}."
+                    ),
+                },
+            },
+            "required": ["tipo", "entity_type", "entity_id"],
+        },
+    },
+}
+
+_TOOL_LISTAR_CUADRILLAS: dict = {
+    "type": "function",
+    "function": {
+        "name": "listar_cuadrillas",
+        "description": (
+            "Lista las cuadrillas del tenant con su carga de trabajo actual "
+            "(reportes activos, resueltos, total). Úsalo para saber qué cuadrilla "
+            "está disponible o tiene menor carga antes de asignar."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+
+_TOOL_CREAR_OBRA: dict = {
+    "type": "function",
+    "function": {
+        "name": "crear_obra",
+        "description": (
+            "Crea una nueva obra pública. Requiere confirmación humana. "
+            "Antes de llamar, usa listar_colonias y listar_contratistas para "
+            "obtener los ids válidos."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "nombre": {"type": "string", "description": "Nombre descriptivo de la obra"},
+                "descripcion": {"type": "string"},
+                "categoria_id": {
+                    "type": "string",
+                    "enum": [
+                        "agua_potable", "alumbrado", "drenaje", "edificios_publicos",
+                        "escuelas", "imagen_urbana", "parques", "pavimentacion", "vialidad",
+                    ],
+                },
+                "prioridad": {"type": "string", "enum": ["baja", "media", "alta", "estrategica"]},
+                "colonia_id": {"type": "string", "description": "ID de la colonia (usa listar_colonias)"},
+                "contratista_id": {"type": "string", "description": "ID del contratista (usa listar_contratistas). Opcional."},
+                "fecha_inicio": {"type": "string", "description": "Fecha inicio ISO (YYYY-MM-DD)"},
+                "fecha_fin_estimada": {"type": "string", "description": "Fecha fin estimada ISO (YYYY-MM-DD)"},
+                "presupuesto_autorizado": {"type": "number", "description": "Presupuesto en MXN. Opcional."},
+            },
+            "required": ["nombre", "categoria_id", "prioridad", "colonia_id", "fecha_inicio", "fecha_fin_estimada"],
+        },
+    },
+}
+
+_TOOL_LISTAR_COLONIAS: dict = {
+    "type": "function",
+    "function": {
+        "name": "listar_colonias",
+        "description": "Lista las colonias del tenant del usuario. Úsalo para obtener el colonia_id al crear obras.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+_TOOL_LISTAR_CONTRATISTAS: dict = {
+    "type": "function",
+    "function": {
+        "name": "listar_contratistas",
+        "description": "Lista los contratistas disponibles con su calificación. Úsalo antes de asignar contratista a una obra.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+
+def tools_para_rol(ctx: UsuarioContexto) -> list[dict]:
+    """Devuelve los tools disponibles según el rol del usuario."""
+    tools = list(_TOOLS_LECTURA)
+    acciones = _ACCIONES_POR_ROL.get(ctx.rol, set())
+    if acciones:
+        tools.append(_TOOL_PREPARAR_ACCION)
+        if "asignar" in acciones or "turnar" in acciones:
+            tools.append(_TOOL_LISTAR_CUADRILLAS)
+        if "crear_obra" in acciones:
+            tools.append(_TOOL_CREAR_OBRA)
+            tools.append(_TOOL_LISTAR_COLONIAS)
+            tools.append(_TOOL_LISTAR_CONTRATISTAS)
+    return tools
+
+
+# Mantener TOOLS_SCHEMA como alias para compatibilidad.
+TOOLS_SCHEMA = _TOOLS_LECTURA
 
 
 # ─── Resúmenes compactos (ahorran tokens) ──────────────────────────────────
@@ -304,12 +460,189 @@ async def _metricas(args: dict, user: User, db: AsyncSession) -> dict:
     return {"intent": intent, "datos": datos}
 
 
+async def _listar_cuadrillas(args: dict, user: User, db: AsyncSession) -> dict:
+    from app.models.reporte import Reporte
+
+    stmt = (
+        select(
+            Cuadrilla.id,
+            Cuadrilla.nombre,
+            func.count(Reporte.id)
+            .filter(Reporte.estado.in_(["asignado", "en_proceso"]))
+            .label("activos"),
+            func.count(Reporte.id)
+            .filter(Reporte.estado.in_(["resuelto", "cerrado"]))
+            .label("resueltos"),
+            func.count(Reporte.id).label("total"),
+        )
+        .outerjoin(Reporte, Reporte.cuadrilla_id == Cuadrilla.id)
+        .where(Cuadrilla.tenant_id == user.tenant_id)
+        .group_by(Cuadrilla.id, Cuadrilla.nombre)
+        .order_by(Cuadrilla.id)
+    )
+    result = await db.execute(stmt)
+    return {
+        "cuadrillas": [
+            {
+                "id": row.id,
+                "nombre": row.nombre,
+                "reportes_activos": row.activos,
+                "reportes_resueltos": row.resueltos,
+                "reportes_total": row.total,
+            }
+            for row in result.all()
+        ]
+    }
+
+
+async def _preparar_accion(args: dict, user: User, db: AsyncSession) -> dict:
+    from app.agente import actions
+
+    ctx = derive_contexto(user)
+    tipo = str(args.get("tipo", "")).strip()
+    entity_type = str(args.get("entity_type", "")).strip()
+    entity_id = str(args.get("entity_id", "")).strip()
+    params = args.get("params") or {}
+
+    # Validar permisos del rol.
+    acciones_permitidas = _ACCIONES_POR_ROL.get(ctx.rol, set())
+    if tipo not in acciones_permitidas:
+        return {
+            "error": f"Tu rol ({ctx.rol}) no tiene permiso para la acción '{tipo}'. "
+            f"Acciones disponibles: {sorted(acciones_permitidas) or 'ninguna'}."
+        }
+
+    if not entity_id:
+        return {"error": "Falta entity_id. Consulta primero el reporte/obra para obtener su id."}
+
+    prepared = await actions.preparar_accion(
+        db, ctx, user,
+        tipo=tipo,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        params=params,
+    )
+    return {
+        "accion_preparada": True,
+        "accion_id": prepared.accion_id,
+        "descripcion": prepared.descripcion,
+        "payload": prepared.payload,
+        "requiere_confirmacion": True,
+        "mensaje": (
+            f"Acción preparada: {prepared.descripcion}. "
+            "El funcionario debe confirmar antes de que se ejecute."
+        ),
+    }
+
+
+async def _diagnostico(args: dict, user: User, db: AsyncSession) -> dict:
+    """Ejecuta un diagnóstico y genera un análisis narrativo via LLM."""
+    import json as _json
+
+    from app.agente.llm.factory import get_llm_client
+
+    datos: dict[str, Any] = {}
+    for intent in ("kpis", "distribucion_categoria", "distribucion_estado",
+                    "top_colonias", "tiempo_por_categoria", "ranking_cuadrillas",
+                    "costo_operativo"):
+        try:
+            datos[intent] = await analytics.ejecutar_intent(intent, user, db)
+        except Exception:
+            pass
+
+    datos_json = _json.dumps(datos, ensure_ascii=False, default=str)
+
+    llm = get_llm_client()
+    analisis = await llm.chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "Eres un analista de gestión pública. Se te entregan datos operativos "
+                    "reales de una alcaldía. Redacta un diagnóstico con recomendaciones "
+                    "CONCRETAS y ACCIONABLES. Cada recomendación debe citar el dato que "
+                    "la sustenta. Estructura: 1) Situación general, 2) Áreas críticas por "
+                    "categoría, 3) Colonias prioritarias, 4) Rendimiento de cuadrillas, "
+                    "5) Recomendaciones (numeradas). Usa tablas y negritas. Sé directo."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Analiza estos datos y dame recomendaciones:\n{datos_json}",
+            },
+        ],
+        max_tokens=3000,
+    )
+
+    return {"analisis": analisis}
+
+
+async def _listar_colonias(args: dict, user: User, db: AsyncSession) -> dict:
+    stmt = select(Colonia.id, Colonia.nombre).where(Colonia.tenant_id == user.tenant_id).order_by(Colonia.nombre)
+    result = await db.execute(stmt)
+    return {"colonias": [{"id": row.id, "nombre": row.nombre} for row in result.all()]}
+
+
+async def _listar_contratistas(args: dict, user: User, db: AsyncSession) -> dict:
+    stmt = select(Contratista.id, Contratista.razon_social, Contratista.calificacion).order_by(Contratista.id)
+    result = await db.execute(stmt)
+    return {
+        "contratistas": [
+            {"id": row.id, "razon_social": row.razon_social, "calificacion": float(row.calificacion) if row.calificacion else None}
+            for row in result.all()
+        ]
+    }
+
+
+async def _crear_obra(args: dict, user: User, db: AsyncSession) -> dict:
+    from datetime import datetime
+
+    from app.core.audit import AuditLogger
+
+    ctx = derive_contexto(user)
+    acciones_permitidas = _ACCIONES_POR_ROL.get(ctx.rol, set())
+    if "crear_obra" not in acciones_permitidas:
+        return {"error": f"Tu rol ({ctx.rol}) no tiene permiso para crear obras."}
+
+    try:
+        data = ObraCreate(
+            nombre=args.get("nombre", ""),
+            descripcion=args.get("descripcion"),
+            categoria_id=args.get("categoria_id", ""),
+            prioridad=args.get("prioridad", "media"),
+            colonia_id=args.get("colonia_id", ""),
+            contratista_id=args.get("contratista_id"),
+            fecha_inicio=datetime.fromisoformat(args["fecha_inicio"]),
+            fecha_fin_estimada=datetime.fromisoformat(args["fecha_fin_estimada"]),
+            presupuesto_autorizado=args.get("presupuesto_autorizado"),
+        )
+    except (KeyError, ValueError) as e:
+        return {"error": f"Datos inválidos: {e}"}
+
+    audit = AuditLogger(db)
+    obra = await obra_service.create_obra(data, user, db, audit)
+    return {
+        "creada": True,
+        "obra_id": obra.id,
+        "folio": obra.folio,
+        "nombre": obra.nombre,
+        "estado": obra.estado,
+        "mensaje": f"Obra '{obra.nombre}' creada con folio {obra.folio} en estado planeación.",
+    }
+
+
 _DISPATCH = {
     "consultar_reporte": _consultar_reporte,
     "buscar_reportes": _buscar_reportes,
     "consultar_obra": _consultar_obra,
     "navegar": _navegar,
     "metricas": _metricas,
+    "diagnostico": _diagnostico,
+    "listar_cuadrillas": _listar_cuadrillas,
+    "listar_colonias": _listar_colonias,
+    "listar_contratistas": _listar_contratistas,
+    "crear_obra": _crear_obra,
+    "preparar_accion": _preparar_accion,
 }
 
 ETIQUETAS = {
@@ -318,6 +651,12 @@ ETIQUETAS = {
     "consultar_obra": "Consulta de obra",
     "navegar": "Navegación",
     "metricas": "Métricas del sistema",
+    "diagnostico": "Diagnóstico integral",
+    "listar_cuadrillas": "Consulta de cuadrillas",
+    "listar_colonias": "Consulta de colonias",
+    "listar_contratistas": "Consulta de contratistas",
+    "crear_obra": "Creación de obra",
+    "preparar_accion": "Preparación de acción",
 }
 
 

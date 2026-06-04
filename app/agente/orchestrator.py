@@ -35,13 +35,18 @@ HERRAMIENTAS_NOTA = (
     "## Herramientas\n"
     "Dispones de herramientas para consultar datos EN VIVO del sistema, siempre "
     "limitadas a tu alcance: consultar_reporte (por folio o id), buscar_reportes, "
-    "consultar_obra y metricas. También puedes NAVEGAR: usa la herramienta 'navegar' "
-    "para abrir una pantalla del sistema (dashboard, bandeja, reportes, obras, personal, "
-    "configuracion) o el detalle de un reporte/obra; el usuario verá un botón para abrirla. "
-    "Úsalas cuando te pregunten por un folio, caso, obra o cifra, o cuando pidan ver/ir a "
-    "una pantalla. La regla de 'responder solo con información disponible' incluye los "
-    "resultados de estas herramientas además de la base de conocimiento. Si una herramienta "
-    "no devuelve datos, dilo claramente; no inventes."
+    "consultar_obra y metricas. Cuando el usuario pregunte por un folio o caso, "
+    "USA consultar_reporte y REDACTA UN RESUMEN con los datos devueltos (estado, "
+    "prioridad, categoría, colonia, cuadrilla, fechas, etc.). Nunca respondas solo "
+    "con un link o 've al detalle'. Los datos de las herramientas SON tu respuesta.\n\n"
+    "También puedes NAVEGAR: usa 'navegar' para ofrecer un botón de acceso directo "
+    "al detalle, pero siempre DESPUÉS de haber respondido en texto. Si una herramienta "
+    "no devuelve datos, dilo claramente; no inventes.\n\n"
+    "Si tienes herramientas de ACCIÓN (preparar_accion, listar_cuadrillas), úsalas "
+    "cuando el usuario pida asignar, turnar, cambiar estado o cerrar un caso. "
+    "Primero consulta el reporte/obra para obtener su id, luego lista cuadrillas "
+    "si aplica, y finalmente prepara la acción. NUNCA digas que ejecutaste la "
+    "acción; solo que la preparaste y que requiere confirmación."
 )
 
 # Palabras que fuerzan marcado de emergencia/sensibilidad (red de seguridad
@@ -112,6 +117,9 @@ def recuperar(
     return filtrar_candidatos(ctx, crudos)
 
 
+_MIN_RAG_SCORE = 0.5  # Solo mostrar documentos con similitud coseno relevante
+
+
 def _fuentes(frags: list[dict]) -> list[Fuente]:
     vistos: dict[str, Fuente] = {}
     for f in frags:
@@ -120,12 +128,16 @@ def _fuentes(frags: list[dict]) -> list[Fuente]:
         if doc_id in vistos:
             continue
         dist = f.get("distance")
+        score = round(1 - dist, 3) if isinstance(dist, int | float) else None
+        # Filtrar fragmentos de baja relevancia para no contaminar la UI.
+        if score is not None and score < _MIN_RAG_SCORE:
+            continue
         vistos[doc_id] = Fuente(
             documento_id=doc_id,
             titulo=m.get("titulo", "Documento"),
             seccion=m.get("seccion"),
             nivel=m.get("nivel", "interno"),
-            score=round(1 - dist, 3) if isinstance(dist, int | float) else None,
+            score=score,
         )
     return list(vistos.values())
 
@@ -151,16 +163,20 @@ async def _loop_tools(
     mensajes: list[Message],
     user: User,
     db: AsyncSession,
-) -> tuple[str, list[str], list[Navegacion]]:
+    tools_schema: list[dict],
+) -> tuple[str, list[str], list[Navegacion], list[dict]]:
     """Ciclo de tool-calling: el modelo pide herramientas, se ejecutan con el
     alcance del usuario y se le devuelven, hasta que produce una respuesta final.
-    Devuelve (texto_final, herramientas_usadas, navegaciones)."""
+    Devuelve (texto_final, herramientas_usadas, navegaciones, acciones_preparadas)."""
     usadas: list[str] = []
     navegaciones: list[Navegacion] = []
+    acciones: list[dict] = []
     for _ in range(MAX_TOOL_ROUNDS):
-        res = await llm.complete(mensajes, tools=tools.TOOLS_SCHEMA)
+        # Si se usó diagnostico, dar más tokens para la respuesta final.
+        extra_tokens = {"max_tokens": 4000} if "diagnostico" in usadas else {}
+        res = await llm.complete(mensajes, tools=tools_schema, **extra_tokens)
         if not res.tool_calls:
-            return res.content or "", usadas, navegaciones
+            return res.content or "", usadas, navegaciones, acciones
 
         mensajes.append(
             {
@@ -185,6 +201,13 @@ async def _loop_tools(
             salida = await tools.ejecutar_tool(tc.name, args, user, db)
             if isinstance(salida, dict) and isinstance(salida.get("navegacion"), dict):
                 navegaciones.append(Navegacion(**salida["navegacion"]))
+            if isinstance(salida, dict) and salida.get("accion_preparada"):
+                acciones.append(salida)
+            # El diagnóstico genera su propio análisis narrativo via LLM.
+            # Lo usamos directamente como respuesta para evitar que el modelo
+            # principal lo colapse a una línea.
+            if tc.name == "diagnostico" and isinstance(salida, dict) and salida.get("analisis"):
+                return salida["analisis"], usadas, navegaciones, acciones
             mensajes.append(
                 {
                     "role": "tool",
@@ -195,7 +218,7 @@ async def _loop_tools(
 
     # Límite alcanzado: forzar respuesta final sin más herramientas.
     res = await llm.complete(mensajes)
-    return res.content or "", usadas, navegaciones
+    return res.content or "", usadas, navegaciones, acciones
 
 
 async def _registrar(
@@ -238,10 +261,13 @@ async def responder_chat(
     ctx = derive_contexto(user)
     historial = historial or []
     llm = llm or get_llm_client()
+    tools_schema = tools.tools_para_rol(ctx)
 
     frags = recuperar(ctx, mensaje, store=store)
     mensajes = construir_mensajes(ctx, mensaje, historial, frags)
-    texto, usadas, navegacion = await _loop_tools(llm, mensajes, user, db)
+    texto, usadas, navegacion, acciones = await _loop_tools(
+        llm, mensajes, user, db, tools_schema
+    )
 
     fuentes = _fuentes(frags) + _fuentes_tools(usadas)
     sin_info = len(frags) == 0 and len(usadas) == 0
@@ -250,7 +276,8 @@ async def responder_chat(
         fuentes=fuentes, sin_informacion=sin_info,
     )
     return ChatResponse(
-        respuesta=texto, fuentes=fuentes, sin_informacion=sin_info, navegacion=navegacion
+        respuesta=texto, fuentes=fuentes, sin_informacion=sin_info,
+        navegacion=navegacion, acciones=acciones,
     )
 
 
@@ -274,10 +301,13 @@ async def stream_chat(
     ctx = derive_contexto(user)
     historial = historial or []
     llm = llm or get_llm_client()
+    tools_schema = tools.tools_para_rol(ctx)
 
     frags = recuperar(ctx, mensaje, store=store)
     mensajes = construir_mensajes(ctx, mensaje, historial, frags)
-    texto, usadas, navegacion = await _loop_tools(llm, mensajes, user, db)
+    texto, usadas, navegacion, acciones = await _loop_tools(
+        llm, mensajes, user, db, tools_schema
+    )
 
     for parte in re.findall(r"\S+\s*", texto):
         yield {"delta": parte}
@@ -288,6 +318,7 @@ async def stream_chat(
         "fuentes": [f.model_dump() for f in fuentes],
         "sin_informacion": sin_info,
         "navegacion": [n.model_dump() for n in navegacion],
+        "acciones": acciones,
     }
 
     await _registrar(

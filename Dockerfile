@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# Instalar PyTorch CPU-only primero (~200 MB en vez de ~900 MB con CUDA).
+# Esta capa se cachea independientemente y rara vez cambia.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
