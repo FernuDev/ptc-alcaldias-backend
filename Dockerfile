@@ -28,4 +28,7 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Aplica migraciones pendientes antes de arrancar (idempotente: si no hay
+# pendientes, no hace nada). Así el esquema de la BD siempre coincide con el
+# código desplegado. Las migraciones son aditivas (tablas/columnas nuevas).
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
