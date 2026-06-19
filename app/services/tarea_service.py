@@ -22,6 +22,7 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.models.campo import Tarea
 from app.models.cuadrilla import Cuadrilla, Integrante
 from app.models.obra import Obra
+from app.models.proyecto import ProyectoTarea
 from app.models.reporte import Reporte, ReporteEvidencia
 from app.models.user import User
 from app.services import notificacion_service, reporte_service
@@ -350,6 +351,75 @@ async def crear_tarea_manual(
     return tarea
 
 
+async def crear_ticket_desde_proyecto_tarea(
+    proyecto_tarea_id: str,
+    user: User,
+    db: AsyncSession,
+    audit: AuditLogger,
+    *,
+    cuadrilla_id: str | None = None,
+) -> Tarea:
+    """Crea un ticket de cuadrilla (tarea de campo) espejo de una tarea de proyecto.
+
+    El ticket «vive» en Cuadrillas (aparece en el Monitor); la tarea de proyecto
+    solo se replica como espejo de solo-avance. Evita duplicar tickets abiertos.
+    """
+    pt = (
+        await db.execute(
+            select(ProyectoTarea).where(
+                ProyectoTarea.id == proyecto_tarea_id,
+                ProyectoTarea.tenant_id == user.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if pt is None:
+        raise NotFoundError("Tarea de proyecto", proyecto_tarea_id)
+
+    existente = (
+        await db.execute(
+            select(Tarea).where(
+                Tarea.tenant_id == user.tenant_id,
+                Tarea.proyecto_tarea_id == proyecto_tarea_id,
+                Tarea.estado != "cerrada",
+            )
+        )
+    ).scalar_one_or_none()
+    if existente is not None:
+        raise ConflictError(
+            "Ya existe un ticket de cuadrilla abierto para esta tarea de proyecto."
+        )
+
+    if cuadrilla_id is not None:
+        await _validar_cuadrilla(cuadrilla_id, user, db)
+
+    tarea = Tarea(
+        tenant_id=user.tenant_id,
+        cuadrilla_id=cuadrilla_id,
+        origen_tipo="proyecto",
+        proyecto_id=pt.proyecto_id,
+        proyecto_tarea_id=pt.id,
+        titulo=(pt.nombre or "Ticket de cuadrilla")[:200],
+        prioridad="media",
+        estado="pendiente",
+    )
+    db.add(tarea)
+    await db.flush()
+
+    await audit.log(
+        action="create",
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        entity_type="tarea",
+        entity_id=tarea.id,
+        extra={
+            "origen_tipo": "proyecto",
+            "proyecto_id": pt.proyecto_id,
+            "proyecto_tarea_id": pt.id,
+        },
+    )
+    return tarea
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Asignación y máquina de estados
 # ─────────────────────────────────────────────────────────────────────────────
@@ -443,6 +513,8 @@ async def cerrar_tarea(
     user: User,
     db: AsyncSession,
     audit: AuditLogger,
+    *,
+    nota: str | None = None,
 ) -> Tarea:
     """Cierra una tarea, exigiendo evidencia antes/después y propagando al reporte.
 
@@ -492,6 +564,7 @@ async def cerrar_tarea(
     old_estado = tarea.estado
     tarea.estado = "cerrada"
     tarea.fecha_cierre = datetime.now(UTC)
+    tarea.cierre_nota = nota or f"Cerrada en campo por {user.nombre} con evidencia de cuadrilla."
     await db.flush()
 
     await audit.log(
@@ -502,6 +575,33 @@ async def cerrar_tarea(
         entity_id=tarea.id,
         changes={"estado": {"old": old_estado, "new": "cerrada"}},
     )
+
+    # Sincronización espejo (REQ-07): si el ticket nace de una tarea de proyecto,
+    # refleja el cierre en la tarea de proyecto (solo-avance) y adjunta la nota.
+    if tarea.proyecto_tarea_id is not None:
+        pt = (
+            await db.execute(
+                select(ProyectoTarea).where(
+                    ProyectoTarea.id == tarea.proyecto_tarea_id,
+                    ProyectoTarea.tenant_id == user.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if pt is not None:
+            pt.estado = "completada"
+            pt.avance_pct = 100
+            await db.flush()
+            await audit.log(
+                action="update",
+                user_id=user.id,
+                tenant_id=user.tenant_id,
+                entity_type="proyecto_tarea",
+                entity_id=pt.id,
+                extra={
+                    "espejo_de_ticket": tarea.id,
+                    "cierre_nota": tarea.cierre_nota,
+                },
+            )
 
     if reporte is not None:
         await reporte_service.marcar_resuelto_desde_campo(

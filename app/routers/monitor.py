@@ -60,6 +60,9 @@ async def posiciones(user: DespachaUser, db: DB):
 async def tareas_kanban(user: DespachaUser, db: DB, cuadrilla_id: str | None = None):
     """Tareas del tenant agrupadas por estado para el tablero kanban."""
     tareas = await tarea_service.list_tareas(user, db, cuadrilla_id=cuadrilla_id)
+    # Carry-over: oculta la instancia anterior de una cadena arrastrada para que el
+    # tablero muestre solo la tarea vigente (con su contador de intento).
+    superseded = {t.carry_over_de for t in tareas if t.carry_over_de}
     columnas: dict[str, list[TareaRead]] = {
         "pendiente": [],
         "en_ruta": [],
@@ -67,6 +70,8 @@ async def tareas_kanban(user: DespachaUser, db: DB, cuadrilla_id: str | None = N
         "cerrada": [],
     }
     for t in tareas:
+        if t.id in superseded:
+            continue
         if t.estado in columnas:
             columnas[t.estado].append(TareaRead.model_validate(t))
     return KanbanRead(**columnas)

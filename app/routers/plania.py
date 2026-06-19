@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.dependencies import DB, CurrentUser, require_permission
+from app.core.dependencies import DB, Audit, CurrentUser, require_permission
 from app.core.permissions import Permission
 from app.schemas.plania import (
     AprobacionCreate,
@@ -11,6 +11,7 @@ from app.schemas.plania import (
     ConectorInterop,
     ConvertirZonaInput,
     ExpedienteZona,
+    GenerarTicketInput,
     PortafolioResumen,
     ProyectoCreate,
     ProyectoListItem,
@@ -24,8 +25,10 @@ from app.schemas.plania import (
     StakeholderRead,
     TareaCreate,
     TareaUpdate,
+    TicketEspejoRead,
 )
 from app.services import plania_service as svc
+from app.services import tarea_service
 
 router = APIRouter(prefix="/plania", tags=["plania"])
 
@@ -109,6 +112,30 @@ async def actualizar_tarea(
     )
 
 
+# ── Puente Proyectos ↔ Cuadrillas (ticket espejo, REQ-07/QA-A) ──────────────
+
+
+@router.post(
+    "/tareas/{proyecto_tarea_id}/generar-ticket",
+    response_model=TicketEspejoRead,
+    status_code=201,
+)
+async def generar_ticket(
+    proyecto_tarea_id: str,
+    data: GenerarTicketInput,
+    user: CurrentUser,
+    db: DB,
+    audit: Audit,
+    _=_GestionObra,
+):
+    """Genera un ticket de cuadrilla (tarea de campo) espejo de una tarea de
+    proyecto. El ticket aparece en el Monitor; al cerrarse, la tarea de proyecto
+    se marca completada y queda la trazabilidad del origen."""
+    return await tarea_service.crear_ticket_desde_proyecto_tarea(
+        proyecto_tarea_id, user, db, audit, cuadrilla_id=data.cuadrilla_id
+    )
+
+
 # ── Expediente de zona (premium) ────────────────────────────────────────────
 
 
@@ -116,19 +143,25 @@ async def actualizar_tarea(
 async def expediente_zona(
     user: CurrentUser,
     db: DB,
-    umbral: int = Query(5, ge=2, le=50),
-    dias: int = Query(180, ge=7, le=730),
+    umbral: int | None = Query(None, ge=2, le=50),
+    dias: int | None = Query(None, ge=7, le=730),
+    radio: int | None = Query(None, ge=50, le=3000),
 ):
-    return await svc.expediente_zona(user, db, umbral=umbral, dias=dias)
+    # Sin overrides usa los parámetros configurados por tenant (Configuración).
+    return await svc.expediente_zona(user, db, umbral=umbral, dias=dias, radio=radio)
 
 
 @router.post(
     "/expediente-zona/convertir", response_model=ProyectoRead, status_code=201
 )
 async def convertir_zona(
-    data: ConvertirZonaInput, user: CurrentUser, db: DB, _=_GestionObra
+    data: ConvertirZonaInput,
+    user: CurrentUser,
+    db: DB,
+    audit: Audit,
+    _=_GestionObra,
 ):
-    return await svc.convertir_zona_en_proyecto(data.model_dump(), user, db)
+    return await svc.convertir_zona_en_proyecto(data.model_dump(), user, db, audit)
 
 
 # ── Coordinación: stakeholders ──────────────────────────────────────────────

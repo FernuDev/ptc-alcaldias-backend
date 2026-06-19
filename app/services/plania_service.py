@@ -11,10 +11,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import AuditLogger
 from app.core.exceptions import NotFoundError
+from app.models.campo import Tarea
 from app.models.categoria import Categoria
 from app.models.colonia import Colonia
 from app.models.proyecto import (
@@ -25,7 +27,9 @@ from app.models.proyecto import (
     ProyectoTarea,
 )
 from app.models.reporte import Reporte
+from app.models.tenant import Tenant
 from app.models.user import User
+from app.schemas.config import ZONA_PARAMS_DEFAULT
 
 # ── Heurísticas del expediente de zona ──────────────────────────────────────
 # Recomendación y costo unitario estimado por palabra clave de la categoría.
@@ -56,6 +60,66 @@ def _severidad(total: int) -> str:
     return "baja"
 
 
+# Dirección/área líder sugerida por categoría del reporte (REQ-09: el proyecto
+# generado declara una dirección líder, no la categoría cruda ni el usuario).
+_DIRECCION_LIDER: dict[str, tuple[str, str]] = {
+    "bacheo": ("obras", "Dirección de Obras y Servicios Urbanos"),
+    "agua": ("agua", "Dirección de Agua y Drenaje"),
+    "drenaje": ("agua", "Dirección de Agua y Drenaje"),
+    "alumbrado": ("alumbrado", "Dirección de Alumbrado Público"),
+    "semaforos": ("alumbrado", "Dirección de Alumbrado y Semáforos"),
+    "limpia": ("limpia", "Dirección de Limpia"),
+    "comercio_vp": ("limpia", "Dirección de Vía Pública y Comercio"),
+    "parques": ("parques", "Dirección de Áreas Verdes y Arbolado"),
+    "arboles": ("parques", "Dirección de Áreas Verdes y Arbolado"),
+    "seguridad": ("seguridad", "Dirección de Seguridad Ciudadana"),
+}
+_DIRECCION_DEFAULT = ("obras", "Dirección de Obras y Servicios Urbanos")
+
+
+def _direccion_lider(categoria_id: str) -> tuple[str, str]:
+    """Devuelve (area_id, nombre_dirección) líder para una categoría."""
+    return _DIRECCION_LIDER.get(categoria_id, _DIRECCION_DEFAULT)
+
+
+# Clustering espacio-temporal con PostGIS: ST_ClusterDBSCAN sobre los reportes de
+# la ventana temporal, particionado por categoría, con eps=radio (metros) y
+# minpoints=umbral. ``geom`` es una columna generada (SRID 4326) que se proyecta a
+# EPSG:6372 (métrico, válido para México) para medir distancias en metros.
+_CLUSTER_SQL = text(
+    """
+    WITH base AS (
+        SELECT
+            id, categoria_id, colonia_id, colonia_nombre, lat, lng,
+            ST_ClusterDBSCAN(
+                ST_Transform(geom, 6372),
+                eps := :radio,
+                minpoints := :umbral
+            ) OVER (PARTITION BY categoria_id) AS cid
+        FROM reportes
+        WHERE tenant_id = :tenant
+          AND fecha_creacion >= :desde
+    )
+    SELECT
+        categoria_id,
+        cid,
+        count(*) AS total,
+        mode() WITHIN GROUP (ORDER BY colonia_id) AS colonia_id,
+        mode() WITHIN GROUP (ORDER BY colonia_nombre) AS colonia_nombre,
+        avg(lat) AS lat,
+        avg(lng) AS lng,
+        array_agg(id ORDER BY id) AS reporte_ids,
+        array_agg(lng ORDER BY id) AS lngs,
+        array_agg(lat ORDER BY id) AS lats
+    FROM base
+    WHERE cid IS NOT NULL
+    GROUP BY categoria_id, cid
+    HAVING count(*) >= :umbral
+    ORDER BY total DESC
+    """
+)
+
+
 # ── Portafolio / Proyectos ──────────────────────────────────────────────────
 
 
@@ -75,6 +139,35 @@ async def listar_proyectos(
     return list((await db.execute(q)).scalars().all())
 
 
+async def _adjuntar_tickets(p: Proyecto, user: User, db: AsyncSession) -> None:
+    """Adjunta a cada tarea de proyecto su ticket de cuadrilla espejo (REQ-07)."""
+    tareas = list(p.tareas)
+    if not tareas:
+        return
+    tickets = (
+        (
+            await db.execute(
+                select(Tarea)
+                .where(
+                    Tarea.tenant_id == user.tenant_id,
+                    Tarea.proyecto_id == p.id,
+                    Tarea.proyecto_tarea_id.is_not(None),
+                )
+                .order_by(Tarea.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Último ticket por tarea de proyecto (el más reciente «gana»).
+    por_pt: dict[str, Tarea] = {}
+    for t in tickets:
+        if t.proyecto_tarea_id is not None:
+            por_pt.setdefault(t.proyecto_tarea_id, t)
+    for pt in tareas:
+        pt.ticket = por_pt.get(pt.id)
+
+
 async def get_proyecto(proyecto_id: str, user: User, db: AsyncSession) -> Proyecto:
     p = (
         await db.execute(
@@ -85,6 +178,7 @@ async def get_proyecto(proyecto_id: str, user: User, db: AsyncSession) -> Proyec
     ).scalar_one_or_none()
     if p is None:
         raise NotFoundError("Proyecto", proyecto_id)
+    await _adjuntar_tickets(p, user, db)
     return p
 
 
@@ -182,37 +276,49 @@ async def portafolio(user: User, db: AsyncSession) -> dict:
 # ── Expediente de zona (clustering espacio-temporal) ────────────────────────
 
 
+async def _resolver_zona_params(
+    user: User,
+    db: AsyncSession,
+    umbral: int | None,
+    dias: int | None,
+    radio: int | None,
+) -> tuple[int, int, int]:
+    """Resuelve los parámetros de clustering: override del query > config del
+    tenant > default global."""
+    tenant = await db.get(Tenant, user.tenant_id)
+    params = {**ZONA_PARAMS_DEFAULT, **((tenant.zona_params if tenant else None) or {})}
+    return (
+        int(umbral if umbral is not None else params["umbral"]),
+        int(dias if dias is not None else params["ventana_dias"]),
+        int(radio if radio is not None else params["radio_m"]),
+    )
+
+
 async def expediente_zona(
     user: User,
     db: AsyncSession,
     *,
-    umbral: int = 5,
-    dias: int = 180,
+    umbral: int | None = None,
+    dias: int | None = None,
+    radio: int | None = None,
 ) -> list[dict]:
-    """Agrupa reportes por (categoría, colonia) en la ventana y, donde superan el
-    umbral, genera un expediente con diagnóstico, recomendación y costo estimado.
+    """Detecta zonas problemáticas con clustering espacio-temporal (PostGIS
+    ST_ClusterDBSCAN: proximidad ``radio`` m + ventana ``dias`` + densidad
+    ``umbral``) y genera un expediente con diagnóstico, recomendación, costo
+    estimado, dirección líder y los puntos del cluster para el mapa.
+
+    Si ``umbral``/``dias``/``radio`` no se especifican, usa los parámetros
+    configurados por tenant en Configuración.
     """
+    umbral, dias, radio = await _resolver_zona_params(user, db, umbral, dias, radio)
     desde = datetime.now(UTC) - timedelta(days=dias)
     rows = (
         await db.execute(
-            select(
-                Reporte.categoria_id,
-                Reporte.colonia_id,
-                func.count().label("total"),
-                func.avg(Reporte.lat).label("lat"),
-                func.avg(Reporte.lng).label("lng"),
-            )
-            .where(
-                Reporte.tenant_id == user.tenant_id,
-                Reporte.fecha_creacion >= desde,
-            )
-            .group_by(Reporte.categoria_id, Reporte.colonia_id)
-            .having(func.count() >= umbral)
-            .order_by(func.count().desc())
+            _CLUSTER_SQL,
+            {"tenant": user.tenant_id, "desde": desde, "umbral": umbral, "radio": radio},
         )
     ).all()
 
-    # Mapas de etiquetas.
     cats = {
         c.id: c.label
         for c in (await db.execute(select(Categoria))).scalars().all()
@@ -239,11 +345,20 @@ async def expediente_zona(
     }
 
     out: list[dict] = []
-    for cat_id, col_id, total, lat, lng in rows:
+    for r in rows:
+        cat_id = r.categoria_id
+        col_id = r.colonia_id
+        total = int(r.total)
         label = cats.get(cat_id)
-        col_nombre = cols.get(col_id)
+        col_nombre = r.colonia_nombre or cols.get(col_id)
         reco, costo = _recomendar(label, cat_id, total)
+        _, direccion = _direccion_lider(cat_id)
         clave_zona = f"{cat_id}:{col_id}"
+        puntos = [
+            [float(lng), float(lat)]
+            for lng, lat in zip(r.lngs, r.lats)
+            if lng is not None and lat is not None
+        ]
         out.append(
             {
                 "zona_id": clave_zona,
@@ -251,18 +366,21 @@ async def expediente_zona(
                 "categoria_label": label,
                 "colonia_id": col_id,
                 "colonia_nombre": col_nombre,
-                "total_reportes": int(total),
-                "severidad": _severidad(int(total)),
-                "lat": float(lat) if lat is not None else None,
-                "lng": float(lng) if lng is not None else None,
+                "total_reportes": total,
+                "severidad": _severidad(total),
+                "lat": float(r.lat) if r.lat is not None else None,
+                "lng": float(r.lng) if r.lng is not None else None,
                 "diagnostico": (
-                    f"Se acumularon {int(total)} reportes de "
-                    f"«{label or cat_id}» en {col_nombre or col_id} en los "
-                    f"últimos {dias} días, lo que sugiere un problema "
-                    f"estructural y no incidentes aislados."
+                    f"Se detectó un cluster de {total} reportes de "
+                    f"«{label or cat_id}» en torno a {col_nombre or col_id} "
+                    f"(radio {radio} m) en los últimos {dias} días, lo que "
+                    f"sugiere un problema estructural y no incidentes aislados."
                 ),
                 "recomendacion": reco,
                 "costo_estimado": costo,
+                "direccion_lider": direccion,
+                "puntos": puntos,
+                "reporte_ids": list(r.reporte_ids),
                 "ya_es_proyecto": clave_zona in ya,
             }
         )
@@ -270,11 +388,37 @@ async def expediente_zona(
 
 
 async def convertir_zona_en_proyecto(
-    data: dict, user: User, db: AsyncSession
+    data: dict,
+    user: User,
+    db: AsyncSession,
+    audit: AuditLogger | None = None,
 ) -> Proyecto:
-    """Crea un Proyecto de Plan.IA a partir de un expediente de zona."""
+    """Crea un Proyecto de Plan.IA a partir de un expediente de zona, hereda la
+    dirección líder y el costo estimado, vincula los reportes del cluster y deja
+    traza auditable (REQ-09)."""
     col_nombre = data.get("colonia_nombre") or data.get("colonia_id")
-    clave_zona = f"{data['categoria_id']}:{data['colonia_id']}"
+    cat_id = data["categoria_id"]
+    clave_zona = f"{cat_id}:{data['colonia_id']}"
+    area_id, direccion = _direccion_lider(cat_id)
+
+    # Carga los reportes del cluster ANTES de construir el proyecto para asignar
+    # la relación al instanciar (evita un lazy-load síncrono después del flush).
+    reporte_ids = data.get("reporte_ids") or []
+    reportes: list[Reporte] = []
+    if reporte_ids:
+        reportes = list(
+            (
+                await db.execute(
+                    select(Reporte).where(
+                        Reporte.tenant_id == user.tenant_id,
+                        Reporte.id.in_(reporte_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     p = Proyecto(
         id=str(uuid.uuid4()),
         tenant_id=user.tenant_id,
@@ -283,17 +427,35 @@ async def convertir_zona_en_proyecto(
         descripcion=(
             f"Proyecto generado desde el expediente de zona: "
             f"{data.get('total_reportes', 0)} reportes recurrentes en "
-            f"{col_nombre}. Recomendación: {data['recomendacion']}."
+            f"{col_nombre}. Recomendación: {data['recomendacion']}. "
+            f"Dirección líder sugerida: {direccion}."
         ),
         estado="planeacion",
         prioridad="alta",
-        area_id=data["categoria_id"],
+        area_id=area_id,
         presupuesto_estimado=data.get("costo_estimado"),
         origen_zona=clave_zona,
-        responsable_nombre=user.nombre,
+        responsable_nombre=direccion,
+        reportes_vinculados=reportes,  # trazabilidad reporte→proyecto
     )
     db.add(p)
     await db.flush()
+
+    if audit is not None:
+        await audit.log(
+            action="crear",
+            user_id=user.id,
+            tenant_id=user.tenant_id,
+            entity_type="proyecto",
+            entity_id=p.id,
+            extra={
+                "origen": "expediente_zona",
+                "zona_id": clave_zona,
+                "reportes_vinculados": len(reporte_ids),
+                "direccion_lider": direccion,
+                "costo_estimado": data.get("costo_estimado"),
+            },
+        )
     return p
 
 
@@ -450,15 +612,19 @@ async def resolver_aprobacion(
 
 # ── Catálogo de interoperabilidad (REQ-08) ──────────────────────────────────
 
+# Estado = disponibilidad comercial del conector (no integración activa):
+#   disponible  → conector listo para desplegar bajo contrato.
+#   on-demand   → se construye a demanda (alcance cotizable).
+#   no_contratado → no incluido en el contrato actual.
 CATALOGO_INTEROP: list[dict] = [
     {"id": "sacmex", "nombre": "SACMEX", "categoria": "Agua", "estado": "on-demand",
      "descripcion": "Sistema de Aguas de la CDMX: tomas, fugas y facturación."},
     {"id": "cfe", "nombre": "CFE", "categoria": "Energía", "estado": "on-demand",
      "descripcion": "Comisión Federal de Electricidad: alumbrado y suministro."},
-    {"id": "c5", "nombre": "C5", "categoria": "Seguridad", "estado": "on-demand",
+    {"id": "c5", "nombre": "C5", "categoria": "Seguridad", "estado": "disponible",
      "descripcion": "Centro de Comando, Control, C4i4: cámaras y emergencias."},
-    {"id": "finanzas", "nombre": "Finanzas / Tesorería", "categoria": "Pagos", "estado": "on-demand",
+    {"id": "finanzas", "nombre": "Finanzas / Tesorería", "categoria": "Pagos", "estado": "disponible",
      "descripcion": "Secretaría de Administración y Finanzas: predial e ingresos."},
-    {"id": "suac", "nombre": "SUAC", "categoria": "Atención", "estado": "on-demand",
+    {"id": "suac", "nombre": "SUAC", "categoria": "Atención", "estado": "no_contratado",
      "descripcion": "Sistema Unificado de Atención Ciudadana del Gobierno CDMX."},
 ]

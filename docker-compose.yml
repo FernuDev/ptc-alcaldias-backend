@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16-alpine
+    # PostGIS (REQ-09: clustering espacial ST_ClusterDBSCAN del expediente de zona).
+    image: postgis/postgis:16-3.4-alpine
     environment:
       POSTGRES_USER: ptc
       POSTGRES_PASSWORD: ptc_secret
