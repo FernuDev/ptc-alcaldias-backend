@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Query
 
-from app.core.dependencies import AdminUser, DB
+from app.core.dependencies import DB, AdminUser
 from app.core.exceptions import NotFoundError
 from app.schemas.audit import AuditLogRead
 from app.schemas.common import PaginatedResponse

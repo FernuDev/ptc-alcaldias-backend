@@ -14,4 +14,7 @@ build/
 data/chroma/
 .cache/
 
+# Archivos subidos en runtime (storage local; en prod va a GCS/S3)
+data/uploads/
+
 .DS_Store

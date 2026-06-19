@@ -103,6 +103,9 @@ class ObraCalleAfectada(Base):
     fecha_inicio: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fecha_fin_estimada: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     alternativas_viales: Mapped[dict | None] = mapped_column(JSONB)
+    tipo_afectacion: Mapped[str | None] = mapped_column(
+        String(10), nullable=True
+    )  # total | parcial | desvio
 
     obra = relationship("Obra", back_populates="calles_afectadas")
 

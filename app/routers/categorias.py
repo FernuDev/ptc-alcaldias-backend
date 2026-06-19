@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from app.core.dependencies import CurrentUser, DB
+from app.core.dependencies import DB, CurrentUser
 from app.models.categoria import Categoria, ObraCategoria
 from app.schemas.categoria import CategoriaRead, ObraCategoriaRead
 

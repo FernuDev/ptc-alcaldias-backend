@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import AdminUser, Audit, CurrentUser, DB
+from app.core.dependencies import DB, AdminUser, Audit, CurrentUser
 from app.schemas.tenant import TenantPublic, TenantRead, TenantUpdate
 from app.services import tenant_service
 

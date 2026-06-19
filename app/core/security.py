@@ -1,15 +1,26 @@
 import hashlib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.config import settings
 
+# Bcrypt cost factor. Unificado entre la app y scripts/seed.py.
+BCRYPT_ROUNDS = 12
+
+# Rate limiter compartido (slowapi). Se instancia aquí —fuera de app.main—
+# para que los routers puedan decorar endpoints sin importación circular.
+# app.main registra este mismo objeto en app.state.limiter y añade el
+# middleware + exception handler.
+limiter = Limiter(key_func=get_remote_address)
+
 
 def hash_password(password: str) -> str:
-    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt(rounds=12)).decode()
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -22,7 +33,7 @@ def create_access_token(
     role: str,
     areas: list[str],
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "tenant_id": tenant_id,
@@ -58,5 +69,7 @@ __all__ = [
     "decode_access_token",
     "create_refresh_token",
     "hash_refresh_token",
+    "limiter",
+    "BCRYPT_ROUNDS",
     "JWTError",
 ]

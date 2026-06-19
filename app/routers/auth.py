@@ -1,6 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from app.core.dependencies import Audit, CurrentUser, DB
+from app.core.config import settings
+from app.core.dependencies import DB, Audit, CurrentUser
+from app.core.security import limiter
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -22,7 +24,8 @@ async def register(data: RegisterRequest, db: DB, audit: Audit):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: DB, audit: Audit):
+@limiter.limit(settings.LOGIN_RATE_LIMIT)
+async def login(request: Request, data: LoginRequest, db: DB, audit: Audit):
     access, refresh, user_brief = await auth_service.authenticate(
         data.email, data.password, db, audit
     )

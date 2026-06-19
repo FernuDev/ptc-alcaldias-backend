@@ -9,7 +9,7 @@ un folio de otra área/tenant, la herramienta responde "sin coincidencias".
 
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agente import analytics
@@ -129,6 +129,45 @@ _TOOLS_LECTURA: list[dict] = [
                 "type": "object",
                 "properties": {"intent": {"type": "string"}},
                 "required": ["intent"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "detectar_duplicados",
+            "description": (
+                "Detecta posibles reportes DUPLICADOS de un reporte dado (folio o id): "
+                "otros reportes que probablemente describen el mismo incidente, por "
+                "cercanía geográfica (~150 m), ventana temporal, misma categoría y "
+                "similitud de texto. Úsalo cuando pregunten si un reporte ya existe, "
+                "si hay reportes repetidos, o antes de asignar para evitar trabajo doble."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "referencia": {"type": "string", "description": "Folio o id del reporte"}
+                },
+                "required": ["referencia"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sugerir_reclasificacion",
+            "description": (
+                "Sugiere una RECLASIFICACIÓN (categoría y prioridad) para un reporte "
+                "dado (folio o id), apoyándose en el clasificador de IA. Indica si la "
+                "categoría o prioridad actual deberían cambiar y por qué. Úsalo cuando "
+                "duden si un reporte está bien clasificado o pidan revisar su prioridad."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "referencia": {"type": "string", "description": "Folio o id del reporte"}
+                },
+                "required": ["referencia"],
             },
         },
     },
@@ -631,6 +670,85 @@ async def _crear_obra(args: dict, user: User, db: AsyncSession) -> dict:
     }
 
 
+async def _resolver_reporte_id(ref: str, user: User, db: AsyncSession) -> str | None:
+    """Resuelve un folio o id a un id de reporte dentro del alcance del usuario."""
+    pag = await reporte_service.list_reportes(user, db, page_size=5, search=ref)
+    match = next(
+        (r for r in pag.items if r.folio == ref or r.id == ref),
+        pag.items[0] if pag.items else None,
+    )
+    return match.id if match else None
+
+
+async def _detectar_duplicados(args: dict, user: User, db: AsyncSession) -> dict:
+    from app.agente import actions
+
+    ref = str(args.get("referencia", "")).strip()
+    if not ref:
+        return {"error": "Falta 'referencia' (folio o id)."}
+    reporte_id = await _resolver_reporte_id(ref, user, db)
+    if reporte_id is None:
+        return {
+            "encontrado": False,
+            "referencia": ref,
+            "mensaje": "Sin coincidencias en tu alcance.",
+        }
+
+    base, candidatos = await actions.detectar_duplicados(reporte_id, user, db)
+    return {
+        "encontrado": True,
+        "reporte": {"folio": base.folio, "id": base.id, "titulo": base.titulo},
+        "total_duplicados": len(candidatos),
+        "hay_duplicados": bool(candidatos),
+        "duplicados": [
+            {
+                "folio": c.reporte.folio,
+                "id": c.reporte.id,
+                "titulo": c.reporte.titulo,
+                "estado": c.reporte.estado,
+                "colonia": c.reporte.colonia_nombre,
+                "score": c.score,
+                "confianza": c.confianza,
+                "distancia_m": c.distancia_m,
+                "horas_diferencia": c.horas_diferencia,
+                "similitud_texto": c.similitud_texto,
+                "motivos": c.motivos,
+            }
+            for c in candidatos
+        ],
+    }
+
+
+async def _sugerir_reclasificacion(args: dict, user: User, db: AsyncSession) -> dict:
+    from app.agente import actions
+
+    ref = str(args.get("referencia", "")).strip()
+    if not ref:
+        return {"error": "Falta 'referencia' (folio o id)."}
+    reporte_id = await _resolver_reporte_id(ref, user, db)
+    if reporte_id is None:
+        return {
+            "encontrado": False,
+            "referencia": ref,
+            "mensaje": "Sin coincidencias en tu alcance.",
+        }
+
+    s = await actions.sugerir_reclasificacion(reporte_id, user, db)
+    return {
+        "encontrado": True,
+        "reporte": {"folio": s.folio, "id": s.reporte_id},
+        "categoria_actual": s.categoria_actual,
+        "categoria_sugerida": s.categoria_sugerida,
+        "cambia_categoria": s.cambia_categoria,
+        "prioridad_actual": s.prioridad_actual,
+        "prioridad_sugerida": s.prioridad_sugerida,
+        "cambia_prioridad": s.cambia_prioridad,
+        "es_emergencia": s.es_emergencia,
+        "es_sensible": s.es_sensible,
+        "justificacion": s.justificacion,
+    }
+
+
 _DISPATCH = {
     "consultar_reporte": _consultar_reporte,
     "buscar_reportes": _buscar_reportes,
@@ -638,6 +756,8 @@ _DISPATCH = {
     "navegar": _navegar,
     "metricas": _metricas,
     "diagnostico": _diagnostico,
+    "detectar_duplicados": _detectar_duplicados,
+    "sugerir_reclasificacion": _sugerir_reclasificacion,
     "listar_cuadrillas": _listar_cuadrillas,
     "listar_colonias": _listar_colonias,
     "listar_contratistas": _listar_contratistas,
@@ -652,6 +772,8 @@ ETIQUETAS = {
     "navegar": "Navegación",
     "metricas": "Métricas del sistema",
     "diagnostico": "Diagnóstico integral",
+    "detectar_duplicados": "Detección de duplicados",
+    "sugerir_reclasificacion": "Sugerencia de reclasificación",
     "listar_cuadrillas": "Consulta de cuadrillas",
     "listar_colonias": "Consulta de colonias",
     "listar_contratistas": "Consulta de contratistas",

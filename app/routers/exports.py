@@ -3,12 +3,12 @@
 All endpoints respect tenant isolation and area filtering via JWT.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser, DB
+from app.core.dependencies import DB, CurrentUser
 from app.models.obra import Obra
 from app.models.reporte import Reporte
 from app.models.tenant import Tenant

@@ -1,6 +1,7 @@
+import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +29,12 @@ from app.schemas.obra import (
     ObraUpdate,
     TimelineCreate,
 )
+from app.services import notificacion_service
+
+logger = logging.getLogger(__name__)
+
+# Estados de obra que ameritan notificar a los responsables del tenant.
+_ESTADOS_OBRA_NOTIFICABLES = {"en_ejecucion", "suspendida", "concluida", "cancelada"}
 
 # Mapping from reporte categories to obra categories (for director filtering)
 REPORT_CAT_TO_OBRA_CAT: dict[str, list[str]] = {
@@ -46,13 +53,15 @@ REPORT_CAT_TO_OBRA_CAT: dict[str, list[str]] = {
 
 def _apply_tenant_and_area_filter(stmt: Select, user: User) -> Select:
     stmt = stmt.where(Obra.tenant_id == user.tenant_id)
-    if user.role != "admin" and user.areas:
+    if user.role != "admin":
+        # Fail-closed: un director sin áreas (o cuyas áreas no mapean a ninguna
+        # categoría de obra, p.ej. seguridad) no ve ninguna obra. .in_([]) genera
+        # un predicado siempre-falso en lugar de exponer todo el tenant.
         area_ids = [a.id for a in user.areas]
-        obra_cats = set()
+        obra_cats: set[str] = set()
         for aid in area_ids:
             obra_cats.update(REPORT_CAT_TO_OBRA_CAT.get(aid, []))
-        if obra_cats:
-            stmt = stmt.where(Obra.categoria_id.in_(list(obra_cats)))
+        stmt = stmt.where(Obra.categoria_id.in_(list(obra_cats)))
     return stmt
 
 
@@ -166,7 +175,7 @@ async def create_obra(
     tl = ObraTimeline(
         id=f"{obra_id}-tl-001",
         obra_id=obra_id,
-        fecha=datetime.now(timezone.utc),
+        fecha=datetime.now(UTC),
         tipo="creacion",
         titulo="Obra registrada en el sistema",
         autor_nombre=user.nombre,
@@ -203,7 +212,7 @@ async def update_obra(
     if data.estado is not None:
         obra.estado = data.estado
         if data.estado == "concluida" and obra.fecha_fin_real is None:
-            obra.fecha_fin_real = datetime.now(timezone.utc)
+            obra.fecha_fin_real = datetime.now(UTC)
     if data.prioridad is not None:
         obra.prioridad = data.prioridad
     if data.avance_pct is not None:
@@ -226,6 +235,25 @@ async def update_obra(
         entity_id=obra_id,
         changes=changes,
     )
+
+    # Notifica a los responsables del tenant ante cambios de estado relevantes.
+    # Defensivo: un fallo de notificación no debe abortar la actualización.
+    try:
+        if new["estado"] != old["estado"] and obra.estado in _ESTADOS_OBRA_NOTIFICABLES:
+            await notificacion_service.notificar_responsables(
+                db,
+                tenant_id=user.tenant_id,
+                tipo="cierre" if obra.estado == "concluida" else "obra",
+                titulo=f"Obra {obra.folio} · {obra.estado.replace('_', ' ')}",
+                cuerpo=f"{obra.nombre} — actualizada por {user.nombre}.",
+                href=f"/obras/{obra_id}",
+                entity_type="obra",
+                entity_id=obra_id,
+                excluir_user_id=user.id,
+            )
+    except Exception:  # noqa: BLE001 — las notificaciones nunca rompen el flujo
+        logger.exception("No se pudo notificar el cambio de estado de la obra %s", obra_id)
+
     return obra
 
 
@@ -294,7 +322,7 @@ async def add_timeline(
     tl = ObraTimeline(
         id=f"{obra_id}-tl-{uuid.uuid4().hex[:6]}",
         obra_id=obra_id,
-        fecha=datetime.now(timezone.utc),
+        fecha=datetime.now(UTC),
         tipo=data.tipo,
         titulo=data.titulo,
         descripcion=data.descripcion,
@@ -319,7 +347,7 @@ async def add_documento(
         nombre=data.nombre,
         tipo=data.tipo,
         tamano_kb=data.tamano_kb,
-        fecha_subida=datetime.now(timezone.utc),
+        fecha_subida=datetime.now(UTC),
         autor=data.autor or user.nombre,
     )
     db.add(doc)
@@ -338,7 +366,7 @@ async def add_evidencia(
         obra_id=obra_id,
         url=data.url,
         caption=data.caption,
-        fecha=datetime.now(timezone.utc),
+        fecha=datetime.now(UTC),
         autor=user.nombre,
         tipo=data.tipo,
     )

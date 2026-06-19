@@ -7,14 +7,14 @@ opcional (para seguimiento personalizado).
 
 import json
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agente_civico import orchestrator as civico_orchestrator
 from app.agente.llm.factory import get_llm_client
 from app.agente.rag.store import get_store
+from app.agente_civico import orchestrator as civico_orchestrator
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import JWTError, decode_access_token

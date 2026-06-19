@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 
-from app.core.dependencies import CurrentUser, DB
+from app.core.dependencies import DB, CurrentUser
 from app.schemas.stats import (
     ActividadReciente,
     CostoOperativo,

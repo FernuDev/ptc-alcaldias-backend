@@ -11,6 +11,12 @@ class EvidenciaRead(BaseModel):
     fecha: datetime | None = None
     autor: str | None = None
     tipo: str | None = None
+    # Geoetiquetado / momento de captura (antes/después) — el monitor y la app de
+    # campo distinguen la evidencia previa de la posterior al trabajo en calle.
+    momento: str | None = None  # antes | despues
+    lat: float | None = None
+    lng: float | None = None
+    timestamp_captura: datetime | None = None
 
     model_config = {"from_attributes": True}
 

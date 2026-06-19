@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +8,9 @@ from app.core.exceptions import NotFoundError
 from app.models.categoria import Categoria
 from app.models.cuadrilla import Cuadrilla
 from app.schemas.cuadrilla import CuadrillaCreate, CuadrillaUpdate
+from app.services import notificacion_service
+
+logger = logging.getLogger(__name__)
 
 
 async def list_cuadrillas(tenant_id: str, db: AsyncSession) -> list[Cuadrilla]:
@@ -25,7 +30,26 @@ async def create_cuadrilla(
         cats = await db.execute(select(Categoria).where(Categoria.id.in_(data.especialidades)))
         c.especialidades = list(cats.scalars().all())
     db.add(c)
+    await db.flush()
     await audit.log(action="create", user_id=user_id, tenant_id=tenant_id, entity_type="cuadrilla", entity_id=c.id)
+
+    # Avisa a los responsables que hay una nueva cuadrilla disponible para despacho.
+    # Defensivo: una falla de notificación no debe romper el alta de la cuadrilla.
+    try:
+        await notificacion_service.notificar_responsables(
+            db,
+            tenant_id=tenant_id,
+            tipo="alerta",
+            titulo=f"Nueva cuadrilla disponible · {c.nombre}",
+            cuerpo=f"La cuadrilla {c.id} quedó registrada y lista para despacho.",
+            href="/cuadrillas",
+            entity_type="cuadrilla",
+            entity_id=c.id,
+            excluir_user_id=user_id,
+        )
+    except Exception:  # noqa: BLE001 — las notificaciones nunca rompen el flujo
+        logger.exception("No se pudo notificar el alta de la cuadrilla %s", c.id)
+
     return c
 
 

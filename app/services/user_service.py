@@ -5,7 +5,7 @@ from app.core.audit import AuditLogger, compute_changes
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.models.categoria import Categoria
-from app.models.user import User, user_areas
+from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 
 

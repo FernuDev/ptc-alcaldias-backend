@@ -1,6 +1,7 @@
+import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,16 +9,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import AuditLogger, compute_changes
 from app.core.exceptions import NotFoundError
 from app.models.colonia import Colonia
-from app.models.reporte import Reporte, ReporteEvidencia, ReporteEvento
+from app.models.reporte import Reporte, ReporteEvento, ReporteEvidencia
 from app.models.user import User
 from app.schemas.common import PaginatedResponse
 from app.schemas.reporte import (
-    EvidenciaCreate,
     EventoCreate,
+    EvidenciaCreate,
     ReporteCreate,
     ReporteRead,
     ReporteUpdate,
 )
+from app.services import notificacion_service
+
+logger = logging.getLogger(__name__)
+
+# Estados de reporte que ameritan avisar a los responsables del área.
+_ESTADOS_NOTIFICABLES = {"asignado", "en_proceso", "resuelto", "cerrado"}
 
 # Category mapping: director areas -> obra categories they can also see
 CATEGORIA_TO_OBRA = {
@@ -38,7 +45,9 @@ def _apply_tenant_and_area_filter(
     stmt: Select, user: User
 ) -> Select:
     stmt = stmt.where(Reporte.tenant_id == user.tenant_id)
-    if user.role != "admin" and user.areas:
+    if user.role != "admin":
+        # Fail-closed: un director sin áreas asignadas no ve nada (lista vacía),
+        # no todo el tenant. .in_([]) genera un predicado siempre-falso.
         area_ids = [a.id for a in user.areas]
         stmt = stmt.where(Reporte.categoria_id.in_(area_ids))
     return stmt
@@ -166,7 +175,7 @@ async def create_reporte(
     folio = f"{acronimo}-RC-{count:04d}"
     reporte_id = f"{acronimo}-RC-{count:04d}"
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     reporte = Reporte(
         id=reporte_id,
         tenant_id=user.tenant_id,
@@ -211,6 +220,23 @@ async def create_reporte(
         entity_id=reporte_id,
     )
 
+    # Avisa a los responsables del área de la recepción del nuevo reporte.
+    try:
+        await notificacion_service.notificar_responsables(
+            db,
+            tenant_id=user.tenant_id,
+            tipo="reporte",
+            titulo=f"Nuevo reporte recibido · {folio}",
+            cuerpo=reporte.titulo,
+            href=f"/reportes/{reporte_id}",
+            entity_type="reporte",
+            entity_id=reporte_id,
+            categoria_id=reporte.categoria_id,
+            excluir_user_id=user.id,
+        )
+    except Exception:  # noqa: BLE001 — las notificaciones nunca rompen el flujo
+        logger.exception("No se pudo notificar la recepción del reporte %s", reporte_id)
+
     return reporte
 
 
@@ -236,7 +262,7 @@ async def update_reporte(
     if data.estado is not None:
         reporte.estado = data.estado
         if data.estado in ("resuelto", "cerrado") and reporte.fecha_cierre is None:
-            reporte.fecha_cierre = datetime.now(timezone.utc)
+            reporte.fecha_cierre = datetime.now(UTC)
             if reporte.fecha_creacion:
                 delta = reporte.fecha_cierre - reporte.fecha_creacion
                 reporte.tiempo_atencion_horas = round(delta.total_seconds() / 3600, 1)
@@ -249,7 +275,7 @@ async def update_reporte(
     if data.gasto_real is not None:
         reporte.gasto_real = data.gasto_real
 
-    reporte.fecha_actualizacion = datetime.now(timezone.utc)
+    reporte.fecha_actualizacion = datetime.now(UTC)
 
     new = {
         "estado": reporte.estado,
@@ -267,6 +293,95 @@ async def update_reporte(
         changes=changes,
     )
 
+    # Disparadores de notificación: cambio de estado y asignación de cuadrilla.
+    # Defensivo: cualquier fallo se registra pero no aborta la actualización.
+    try:
+        href = f"/reportes/{reporte_id}"
+        estado_cambio = new["estado"] != old["estado"]
+        if estado_cambio and reporte.estado in _ESTADOS_NOTIFICABLES:
+            await notificacion_service.notificar_responsables(
+                db,
+                tenant_id=user.tenant_id,
+                tipo="cierre" if reporte.estado in ("resuelto", "cerrado") else "reporte",
+                titulo=f"Reporte {reporte.folio} · {reporte.estado.replace('_', ' ')}",
+                cuerpo=f"{reporte.titulo} — actualizado por {user.nombre}.",
+                href=href,
+                entity_type="reporte",
+                entity_id=reporte_id,
+                categoria_id=reporte.categoria_id,
+                excluir_user_id=user.id,
+            )
+
+        cuadrilla_cambio = (
+            new["cuadrilla_id"] != old["cuadrilla_id"] and reporte.cuadrilla_id is not None
+        )
+        if cuadrilla_cambio:
+            await notificacion_service.notificar_responsables(
+                db,
+                tenant_id=user.tenant_id,
+                tipo="reporte",
+                titulo=f"Cuadrilla asignada · {reporte.folio}",
+                cuerpo=(
+                    f"Se despachó la cuadrilla {reporte.cuadrilla_id} "
+                    f"al reporte «{reporte.titulo}»."
+                ),
+                href=href,
+                entity_type="reporte",
+                entity_id=reporte_id,
+                categoria_id=reporte.categoria_id,
+                excluir_user_id=user.id,
+            )
+    except Exception:  # noqa: BLE001 — las notificaciones nunca rompen el flujo
+        logger.exception("No se pudieron emitir notificaciones del reporte %s", reporte_id)
+
+    return reporte
+
+
+async def marcar_resuelto_desde_campo(
+    reporte: Reporte,
+    db: AsyncSession,
+    *,
+    actor_nombre: str | None = None,
+    nota: str | None = None,
+) -> Reporte:
+    """Marca un reporte como ``resuelto`` desde el flujo de campo (cierre de tarea).
+
+    Punto de enganche para ``tarea_service``: reutiliza la misma lógica de cierre
+    que :func:`update_reporte` (fecha de cierre + cálculo de
+    ``tiempo_atencion_horas``) sin pasar por el schema ``ReporteUpdate`` ni alterar
+    las firmas del backoffice. Recibe la instancia ``Reporte`` ya cargada y validada
+    por tenant en el llamador.
+
+    Además registra un ``ReporteEvento`` de cierre, deja el ``Reporte`` en la sesión
+    y dispara la notificación a los responsables (defensivo, vía el llamador). NO
+    hace commit: la unidad de trabajo de la request lo confirma. Idempotente: si el
+    reporte ya está ``resuelto``/``cerrado`` no recalcula la fecha de cierre.
+    """
+    now = datetime.now(UTC)
+    ya_cerrado = reporte.estado in ("resuelto", "cerrado")
+
+    reporte.estado = "resuelto"
+    if reporte.fecha_cierre is None:
+        reporte.fecha_cierre = now
+        if reporte.fecha_creacion:
+            delta = reporte.fecha_cierre - reporte.fecha_creacion
+            reporte.tiempo_atencion_horas = round(delta.total_seconds() / 3600, 1)
+    reporte.fecha_actualizacion = now
+
+    if not ya_cerrado:
+        descripcion = nota or "Trabajo concluido en campo con evidencia antes/después."
+        evt = ReporteEvento(
+            id=f"{reporte.id}-tl-{uuid.uuid4().hex[:8]}",
+            reporte_id=reporte.id,
+            fecha=now,
+            tipo="cierre",
+            titulo="Reporte resuelto en campo",
+            descripcion=descripcion,
+            autor_nombre=actor_nombre,
+        )
+        db.add(evt)
+
+    await db.flush()
     return reporte
 
 
@@ -309,7 +424,7 @@ async def add_evidencia(
         reporte_id=reporte_id,
         url=data.url,
         caption=data.caption,
-        fecha=datetime.now(timezone.utc),
+        fecha=datetime.now(UTC),
         autor=user.nombre,
         tipo=data.tipo,
     )
@@ -340,7 +455,7 @@ async def add_evento(
     evt = ReporteEvento(
         id=f"{reporte_id}-tl-{uuid.uuid4().hex[:8]}",
         reporte_id=reporte_id,
-        fecha=datetime.now(timezone.utc),
+        fecha=datetime.now(UTC),
         tipo=data.tipo,
         titulo=data.titulo,
         descripcion=data.descripcion,

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 
-from app.core.dependencies import CurrentUser, DB
-from app.schemas.notificacion import NotificacionConteo, NotificacionRead, NotificacionesList
+from app.core.dependencies import DB, CurrentUser
+from app.schemas.notificacion import NotificacionConteo, NotificacionesList, NotificacionRead
 from app.services import notificacion_service
 
 router = APIRouter(prefix="/notificaciones", tags=["notificaciones"])

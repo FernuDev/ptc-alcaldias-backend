@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import AdminUser, Audit, CurrentUser, DB
+from app.core.dependencies import DB, AdminUser, Audit, CurrentUser
 from app.schemas.contratista import ContratistaCreate, ContratistaRead, ContratistaUpdate
 from app.services import contratista_service
 

@@ -11,29 +11,27 @@ Each export produces a multi-page landscape PDF:
 from __future__ import annotations
 
 import io
-import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import landscape, letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import (
     Image,
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.platypus import PageBreak
 
 PAGE = landscape(letter)
 W, H = PAGE
@@ -124,7 +122,7 @@ def _draw_cover(canvas, doc, tenant_name: str, title: str, subtitle: str, color:
     c.drawCentredString(W / 2, H * 0.42, tenant_name)
 
     # Date
-    now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    now = datetime.now(UTC).strftime("%d/%m/%Y %H:%M UTC")
     c.setFont("Helvetica", 11)
     c.setFillColor(colors.HexColor("#FFFFFFBB"))
     c.drawCentredString(W / 2, H * 0.28, f"Generado: {now}")
@@ -146,7 +144,7 @@ def _header_footer(canvas, doc, tenant_name: str, color: str):
     c.setFillColor(GRIS)
     c.setFont("Helvetica", 7)
     c.drawString(MARGIN, 18, f"Plataforma Ciudadana · {tenant_name}")
-    now = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    now = datetime.now(UTC).strftime("%d/%m/%Y")
     c.drawRightString(W - MARGIN, 18, now)
 
 
@@ -223,10 +221,10 @@ def _bar_chart(data: list[dict], title: str, key_x: str, key_y: str,
     chart_colors = [d.get("color", CHART_COLORS[i % len(CHART_COLORS)]) for i, d in enumerate(data[:12])]
 
     if horizontal:
-        bars = ax.barh(labels[::-1], values[::-1], color=chart_colors[::-1], height=0.6)
+        ax.barh(labels[::-1], values[::-1], color=chart_colors[::-1], height=0.6)
         ax.set_xlabel(key_y.replace("_", " ").title(), fontsize=8)
     else:
-        bars = ax.bar(labels, values, color=chart_colors, width=0.6)
+        ax.bar(labels, values, color=chart_colors, width=0.6)
         ax.set_ylabel(key_y.replace("_", " ").title(), fontsize=8)
         plt.xticks(rotation=35, ha="right", fontsize=7)
 
@@ -428,14 +426,6 @@ def generate_obras_pdf(
 
     story.append(Paragraph("Programa de obra pública", ss["SlideTitle"]))
     story.append(Spacer(1, 12))
-    kpi_data = {
-        "activos": activas, "resueltos": total - activas,
-        "tiempo_promedio_dias": avg_avance,
-        "en_riesgo_sla": sum(1 for o in obras if o.get("estado") == "suspendida"),
-        "total_rango": total,
-        "pct_resueltos": round(avg_avance, 1),
-    }
-    # Rename labels for obras context
     cards_data = [
         (str(activas), "Obras activas"),
         (str(total), "Total obras"),

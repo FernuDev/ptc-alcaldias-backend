@@ -7,12 +7,10 @@ Sheet 2 "Dashboard": KPIs summary, distribution tables, and charts.
 from __future__ import annotations
 
 import io
-from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.chart.label import DataLabelList
-from openpyxl.chart.series import DataPoint
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 

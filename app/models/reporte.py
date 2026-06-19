@@ -8,7 +8,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
-    Integer,
     SmallInteger,
     String,
     Table,
@@ -91,6 +90,13 @@ class ReporteEvidencia(Base):
     fecha: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     autor: Mapped[str | None] = mapped_column(String(100))
     tipo: Mapped[str | None] = mapped_column(String(20))  # ciudadano | cuadrilla | inspeccion
+    # Evidencia geoetiquetada (captura georreferenciada en campo).
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    timestamp_captura: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    momento: Mapped[str | None] = mapped_column(String(10), nullable=True)  # antes | despues
 
     reporte = relationship("Reporte", back_populates="evidencias")
 

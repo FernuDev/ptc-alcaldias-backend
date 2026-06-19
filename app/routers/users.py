@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import AdminUser, Audit, DB
+from app.core.dependencies import DB, AdminUser, Audit
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.services import user_service
 

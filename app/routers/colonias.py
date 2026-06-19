@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import CurrentUser, DB
+from app.core.dependencies import DB, CurrentUser
 from app.schemas.colonia import ColoniaRead
 from app.services import colonia_service
 

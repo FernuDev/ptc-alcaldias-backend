@@ -1,12 +1,11 @@
 """Stats computed via SQL aggregations — replaces the in-memory JS calculations."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import case, cast, extract, func, select, text, Float
+from sqlalchemy import Float, case, cast, extract, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.categoria import Categoria
-from app.models.colonia import Colonia
 from app.models.cuadrilla import Cuadrilla
 from app.models.reporte import Reporte
 from app.models.user import User
@@ -26,13 +25,40 @@ from app.schemas.stats import (
 
 ESTADOS_ABIERTOS = ("nuevo", "asignado", "en_proceso")
 SLA_LIMITS = {"critica": 12, "alta": 48, "media": 96, "baja": 168}
+
+
+async def _sla_horas(user: User, db: AsyncSession) -> dict[str, int]:
+    """Límites de SLA en HORAS por prioridad para el tenant del usuario.
+
+    Lee la configuración persistente del tenant (``sla_dias``, módulo 13) y la
+    convierte a horas; si no está personalizada, usa los defaults históricos.
+    """
+    from app.models.tenant import Tenant
+
+    t = await db.get(Tenant, user.tenant_id)
+    dias = t.sla_dias if t and t.sla_dias else None
+    if dias:
+        return {k: int(v) * 24 for k, v in dias.items()}
+    return dict(SLA_LIMITS)
+
+
+def _sla_case(sla_h: dict[str, int]):
+    """Construye el CASE SQL de SLA (horas) a partir del dict por prioridad."""
+    return case(
+        (Reporte.prioridad == "critica", sla_h.get("critica", 12)),
+        (Reporte.prioridad == "alta", sla_h.get("alta", 48)),
+        (Reporte.prioridad == "media", sla_h.get("media", 96)),
+        else_=sla_h.get("baja", 168),
+    )
 DIA_NOMBRES = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
 
 
 def _base_filter(user: User):
     """Return a list of WHERE clauses for tenant + area isolation."""
     filters = [Reporte.tenant_id == user.tenant_id]
-    if user.role != "admin" and user.areas:
+    if user.role != "admin":
+        # Fail-closed: un director sin áreas asignadas no agrega métricas de
+        # todo el tenant; .in_([]) genera un predicado siempre-falso (sin datos).
         area_ids = [a.id for a in user.areas]
         filters.append(Reporte.categoria_id.in_(area_ids))
     return filters
@@ -40,7 +66,7 @@ def _base_filter(user: User):
 
 async def calc_kpis(user: User, db: AsyncSession) -> KpisResponse:
     filters = _base_filter(user)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     total_q = select(func.count()).select_from(Reporte).where(*filters)
     total = (await db.execute(total_q)).scalar() or 0
@@ -56,13 +82,8 @@ async def calc_kpis(user: User, db: AsyncSession) -> KpisResponse:
     )
     avg_hours = (await db.execute(avg_q)).scalar() or 0
 
-    # SLA risk: open reports exceeding their priority SLA limit
-    sla_case = case(
-        (Reporte.prioridad == "critica", 12),
-        (Reporte.prioridad == "alta", 48),
-        (Reporte.prioridad == "media", 96),
-        else_=168,
-    )
+    # SLA risk: open reports exceeding their priority SLA limit (por tenant)
+    sla_case = _sla_case(await _sla_horas(user, db))
     age_hours = extract("epoch", now - Reporte.fecha_creacion) / 3600
     sla_q = select(func.count()).select_from(Reporte).where(
         *filters, Reporte.estado.in_(ESTADOS_ABIERTOS), age_hours > sla_case
@@ -81,7 +102,7 @@ async def calc_kpis(user: User, db: AsyncSession) -> KpisResponse:
 
 async def volumen_por_dia(user: User, db: AsyncSession, dias: int = 30) -> list[VolumenDia]:
     filters = _base_filter(user)
-    since = datetime.now(timezone.utc) - timedelta(days=dias)
+    since = datetime.now(UTC) - timedelta(days=dias)
 
     recibidos_q = (
         select(
@@ -182,7 +203,7 @@ async def top_colonias(user: User, db: AsyncSession, n: int = 6) -> list[TopColo
 
 async def sla_semanal(user: User, db: AsyncSession, semanas: int = 6) -> list[SlaSemanal]:
     filters = _base_filter(user)
-    since = datetime.now(timezone.utc) - timedelta(weeks=semanas)
+    since = datetime.now(UTC) - timedelta(weeks=semanas)
     q = (
         select(
             func.date_trunc("week", Reporte.fecha_cierre).label("semana"),
@@ -215,13 +236,7 @@ async def tiempo_por_categoria(user: User, db: AsyncSession) -> list[TiempoCateg
 
 async def ranking_cuadrillas(user: User, db: AsyncSession) -> list[RankingCuadrilla]:
     filters = _base_filter(user)
-    now = datetime.now(timezone.utc)
-    sla_case = case(
-        (Reporte.prioridad == "critica", 12),
-        (Reporte.prioridad == "alta", 48),
-        (Reporte.prioridad == "media", 96),
-        else_=168,
-    )
+    sla_case = _sla_case(await _sla_horas(user, db))
     q = (
         select(
             Reporte.cuadrilla_id,

@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Query
 
-from app.core.dependencies import AdminUser, Audit, CurrentUser, DB
+from app.core.dependencies import DB, AdminUser, Audit, CurrentUser
 from app.schemas.common import PaginatedResponse
 from app.schemas.reporte import (
-    EvidenciaCreate,
-    EvidenciaRead,
     EventoCreate,
     EventoRead,
+    EvidenciaCreate,
+    EvidenciaRead,
     ReporteCreate,
     ReporteRead,
     ReporteUpdate,

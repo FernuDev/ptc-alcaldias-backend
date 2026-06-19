@@ -20,6 +20,7 @@ dependencies = [
     "openpyxl>=3.1,<4",
     # ── Agente Institucional ──
     "openai>=1.40,<2",            # cliente compatible para DeepSeek (y otros)
+    "anthropic>=0.40,<1",         # cliente Claude con tool-calling (LLM_PROVIDER=anthropic)
     "chromadb>=0.5,<1",           # base vectorial local (RAG)
     "sentence-transformers>=3,<4", # embeddings locales (arrastra torch, pesado)
 ]

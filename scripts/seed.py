@@ -51,6 +51,24 @@ DATABASE_URL: str = os.environ.get(
     "postgresql+asyncpg://ptc:ptc_secret@localhost:5432/ptc_alcaldias",
 )
 
+# ---------------------------------------------------------------------------
+# Credenciales demo
+# ---------------------------------------------------------------------------
+# Todos los usuarios seed comparten una password demo única (robusta pero
+# pública para la demo), no el patrón débil y enumerable "{id}.2026".
+# Se puede sobreescribir con la variable de entorno SEED_DEMO_PASSWORD.
+#
+#   CREDENCIALES DEMO  ──────────────────────────────────────────────
+#   email:    cualquier email de la tabla USERS (p.ej.
+#             fernando.mercado@mcontreras.gob.mx  /  admin Magdalena Contreras
+#             gabriela.osorio@tlalpan.cdmx.gob.mx /  admin Tlalpan)
+#   password: TuAlcaldIA-Demo-2026!   (o el valor de SEED_DEMO_PASSWORD)
+#   ──────────────────────────────────────────────────────────────────
+DEMO_PASSWORD: str = os.environ.get("SEED_DEMO_PASSWORD", "TuAlcaldIA-Demo-2026!")
+
+# Costo de bcrypt unificado con app/core/security.py (BCRYPT_ROUNDS = 12).
+BCRYPT_ROUNDS = 12
+
 # ═══════════════════════════════════════════════════════════════════════════
 # mulberry32 PRNG  (bit-for-bit identical to the TypeScript version)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -219,6 +237,15 @@ USERS = [
     {"id": "tl-dir-limpia",     "tenant_id": "tlalpan", "email": "beatriz.cardenas@tlalpan.cdmx.gob.mx","nombre": "Lic. Beatriz C\u00e1rdenas",             "iniciales": "BC", "cargo": "Direcci\u00f3n de Limpia y Recolecci\u00f3n",       "role": "director_area", "areas": ["limpia", "comercio_vp"],      "avatar_tone": None},
     {"id": "tl-dir-parques",    "tenant_id": "tlalpan", "email": "arturo.benitez@tlalpan.cdmx.gob.mx",  "nombre": "Bi\u00f3l. Arturo Ben\u00edtez",         "iniciales": "AB", "cargo": "Direcci\u00f3n de Medio Ambiente \u00b7 Conservaci\u00f3n", "role": "director_area", "areas": ["parques", "arboles"], "avatar_tone": None},
     {"id": "tl-dir-seguridad",  "tenant_id": "tlalpan", "email": "carmen.lopez@tlalpan.cdmx.gob.mx",    "nombre": "Mtra. Carmen L\u00f3pez",                "iniciales": "CL", "cargo": "Direcci\u00f3n de Seguridad Ciudadana",              "role": "director_area", "areas": ["seguridad"],                  "avatar_tone": None},
+    # Nuevos perfiles operativos (RBAC de 6 roles) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    # MC
+    {"id": "mc-supervisor",     "tenant_id": "magdalena-contreras", "email": "patricia.mendoza@mcontreras.gob.mx", "nombre": "Lic. Patricia Mendoza",   "iniciales": "PM", "cargo": "Supervisi\u00f3n CESAC \u00b7 Atenci\u00f3n Ciudadana",     "role": "supervisor",     "areas": [],                        "avatar_tone": None},
+    {"id": "mc-jefe-cuadrilla", "tenant_id": "magdalena-contreras", "email": "andres.rivera@mcontreras.gob.mx",    "nombre": "Ing. Andr\u00e9s Rivera",  "iniciales": "AR", "cargo": "Jefatura de Cuadrilla \u00b7 Bacheo",                 "role": "jefe_cuadrilla", "areas": ["bacheo"],                "avatar_tone": None},
+    {"id": "mc-inspector",      "tenant_id": "magdalena-contreras", "email": "roberto.sanchez@mcontreras.gob.mx",  "nombre": "Ing. Roberto S\u00e1nchez","iniciales": "RS", "cargo": "Inspecci\u00f3n y Verificaci\u00f3n de Obra",            "role": "inspector",      "areas": [],                        "avatar_tone": None},
+    # TL
+    {"id": "tl-supervisor",     "tenant_id": "tlalpan", "email": "mariana.cardenas@tlalpan.cdmx.gob.mx", "nombre": "Lic. Mariana C\u00e1rdenas", "iniciales": "MC", "cargo": "Subdirecci\u00f3n de Atenci\u00f3n Ciudadana",            "role": "supervisor",     "areas": [],                        "avatar_tone": None},
+    {"id": "tl-jefe-cuadrilla", "tenant_id": "tlalpan", "email": "hugo.ramirez@tlalpan.cdmx.gob.mx",     "nombre": "Hugo Ram\u00edrez",         "iniciales": "HR", "cargo": "Jefatura de Cuadrilla \u00b7 Alumbrado",              "role": "jefe_cuadrilla", "areas": ["alumbrado", "semaforos"],"avatar_tone": None},
+    {"id": "tl-inspector",      "tenant_id": "tlalpan", "email": "lourdes.vega@tlalpan.cdmx.gob.mx",     "nombre": "Arq. Lourdes Vega",         "iniciales": "LV", "cargo": "Inspecci\u00f3n de Calidad",                          "role": "inspector",      "areas": [],                        "avatar_tone": None},
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -749,6 +776,292 @@ NOMBRES_EQUIPO = [
 
 CIERRE_ESTADOS = ["cerrada_total", "cerrada_parcial", "desvio"]
 
+# Mapeo determinista CIERRE_ESTADOS -> tipo_afectacion del modelo
+# ('total' | 'parcial' | 'desvio'), aplicado a las calles ya sembradas.
+CIERRE_TO_TIPO_AFECTACION = {
+    "cerrada_total": "total",
+    "cerrada_parcial": "parcial",
+    "desvio": "desvio",
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Compromisos de gobierno (metas públicas con avance medible)
+# Plantilla compartida por ambos tenants; id determinista "{prefix}-CMP-NN".
+# Estados válidos: en_progreso | cumplido | en_riesgo | retrasado
+# ═══════════════════════════════════════════════════════════════════════════
+
+COMPROMISOS_BASE = [
+    {
+        "titulo": "Rehabilitar 50 km de vialidades primarias",
+        "descripcion": "Programa anual de bacheo y repavimentación de las vías de mayor afluencia para reducir incidentes viales.",
+        "area_id": "bacheo",
+        "meta": "50 km de carpeta asfáltica renovada",
+        "avance_pct": 62,
+        "estado": "en_progreso",
+        "dias_objetivo": 90,
+    },
+    {
+        "titulo": "Modernizar el alumbrado público a tecnología LED",
+        "descripcion": "Sustitución de luminarias por tecnología LED de bajo consumo en colonias con mayor índice de inseguridad.",
+        "area_id": "alumbrado",
+        "meta": "8,000 luminarias LED instaladas",
+        "avance_pct": 100,
+        "estado": "cumplido",
+        "dias_objetivo": -20,
+    },
+    {
+        "titulo": "Eliminar tiraderos clandestinos prioritarios",
+        "descripcion": "Operativos de limpieza y vigilancia en los puntos críticos de acumulación de residuos detectados por la ciudadanía.",
+        "area_id": "limpia",
+        "meta": "40 tiraderos erradicados",
+        "avance_pct": 35,
+        "estado": "en_riesgo",
+        "dias_objetivo": 45,
+    },
+    {
+        "titulo": "Reducir fugas en la red de agua potable",
+        "descripcion": "Detección y reparación de fugas en la red secundaria para abatir pérdidas y mejorar la presión de suministro.",
+        "area_id": "agua",
+        "meta": "Reducir pérdidas físicas al 15%",
+        "avance_pct": 48,
+        "estado": "retrasado",
+        "dias_objetivo": 120,
+    },
+    {
+        "titulo": "Rehabilitar parques y áreas verdes vecinales",
+        "descripcion": "Recuperación de mobiliario, juegos infantiles y arbolado en parques con mayor uso comunitario.",
+        "area_id": "parques",
+        "meta": "25 parques rehabilitados",
+        "avance_pct": 78,
+        "estado": "en_progreso",
+        "dias_objetivo": 60,
+    },
+    {
+        "titulo": "Programa permanente de poda y arbolado urbano",
+        "descripcion": "Poda preventiva y censo de arbolado de riesgo para evitar caídas durante la temporada de lluvias.",
+        "area_id": "arboles",
+        "meta": "3,500 árboles atendidos",
+        "avance_pct": 22,
+        "estado": "retrasado",
+        "dias_objetivo": 150,
+    },
+]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Trámites y servicios (catálogo público por tenant)
+# Plantilla compartida por ambos tenants; id determinista "{prefix}-TRM-NN".
+# La dependencia se resuelve por tenant: "{Dependencia} · {Alcaldía}".
+# ═══════════════════════════════════════════════════════════════════════════
+
+TRAMITES_BASE = [
+    {
+        "nombre": "Licencia de Funcionamiento para Establecimiento Mercantil",
+        "dependencia": "Dirección de Gobierno y Reglamentos",
+        "area_id": "comercio_vp",
+        "descripcion": "Permiso para operar un establecimiento mercantil de bajo impacto (giro de comercio o servicios) dentro de la demarcación.",
+        "requisitos": [
+            "Identificación oficial vigente del solicitante",
+            "Comprobante de domicilio del establecimiento (no mayor a 3 meses)",
+            "Constancia de alineamiento y número oficial",
+            "Aviso de declaración de apertura ante la Tesorería",
+            "RFC y CURP del titular",
+        ],
+        "costo": "Gratuito (giros de bajo impacto)",
+        "tiempo_estimado": "3 a 5 días hábiles",
+        "vigencia": "Indefinida con refrendo anual",
+        "documentos": [
+            {"nombre": "Formato de declaración de apertura", "url": "/formatos/declaracion-apertura.pdf"},
+            {"nombre": "Guía de giros de bajo impacto", "url": "/formatos/giros-bajo-impacto.pdf"},
+        ],
+        "horarios": "Lunes a viernes de 9:00 a 14:00 h",
+    },
+    {
+        "nombre": "Constancia de Residencia",
+        "dependencia": "Dirección Ejecutiva de Atención Ciudadana",
+        "area_id": None,
+        "descripcion": "Documento oficial que acredita que una persona reside dentro de la demarcación territorial.",
+        "requisitos": [
+            "Identificación oficial vigente con fotografía",
+            "Comprobante de domicilio reciente (no mayor a 3 meses)",
+            "CURP",
+            "Dos testigos con identificación (en caso de no contar con comprobante)",
+        ],
+        "costo": "Gratuito",
+        "tiempo_estimado": "Mismo día",
+        "vigencia": "90 días naturales",
+        "documentos": [
+            {"nombre": "Formato de solicitud de constancia", "url": "/formatos/solicitud-constancia-residencia.pdf"},
+        ],
+        "horarios": "Lunes a viernes de 9:00 a 15:00 h",
+    },
+    {
+        "nombre": "Solicitud de Poda o Derribo de Árbol",
+        "dependencia": "Dirección de Medio Ambiente y Servicios Urbanos",
+        "area_id": "arboles",
+        "descripcion": "Trámite para solicitar la poda, balanceo o derribo de arbolado en vía pública que represente riesgo o interfiera con servicios.",
+        "requisitos": [
+            "Identificación oficial del solicitante",
+            "Domicilio o ubicación exacta del árbol (calle y referencias)",
+            "Fotografía del árbol y su entorno",
+            "Motivo de la solicitud (riesgo, plaga, interferencia)",
+        ],
+        "costo": "Gratuito",
+        "tiempo_estimado": "10 a 15 días hábiles (previa inspección)",
+        "vigencia": "No aplica",
+        "documentos": [
+            {"nombre": "Formato de solicitud de poda", "url": "/formatos/solicitud-poda-arbol.pdf"},
+        ],
+        "donde_acudir": "Ventanilla de Medio Ambiente",
+        "horarios": "Lunes a viernes de 9:00 a 14:00 h",
+    },
+    {
+        "nombre": "Reporte de Bache en Vía Pública",
+        "dependencia": "Dirección de Obras y Servicios Urbanos",
+        "area_id": "bacheo",
+        "descripcion": "Reporte ciudadano para la reparación de baches y deterioro de la carpeta asfáltica en calles secundarias.",
+        "requisitos": [
+            "Ubicación exacta del bache (calle, esquina y colonia)",
+            "Fotografía del deterioro (opcional pero recomendado)",
+            "Datos de contacto para seguimiento (opcional)",
+        ],
+        "costo": "Gratuito",
+        "tiempo_estimado": "5 a 10 días hábiles",
+        "vigencia": "No aplica",
+        "documentos": [],
+        "donde_acudir": "CESAC o app Tu Alcald.IA",
+        "horarios": "Atención en línea 24/7",
+    },
+    {
+        "nombre": "Constancia de Alineamiento y Número Oficial",
+        "dependencia": "Dirección de Desarrollo Urbano",
+        "area_id": None,
+        "descripcion": "Documento que fija la alineación del predio respecto a la vía pública y asigna o ratifica el número oficial del inmueble.",
+        "requisitos": [
+            "Escritura o título de propiedad del predio",
+            "Boleta predial al corriente",
+            "Identificación oficial del propietario",
+            "Croquis de localización del predio",
+        ],
+        "costo": "$420.00 (cuota vigente)",
+        "tiempo_estimado": "5 a 8 días hábiles",
+        "vigencia": "1 año",
+        "documentos": [
+            {"nombre": "Formato de solicitud de alineamiento", "url": "/formatos/solicitud-alineamiento.pdf"},
+        ],
+        "donde_acudir": "Ventanilla Única de Desarrollo Urbano",
+        "horarios": "Lunes a viernes de 9:00 a 14:00 h",
+    },
+    {
+        "nombre": "Apoyo de Pipa de Agua Potable",
+        "dependencia": "Dirección de Agua y Drenaje",
+        "area_id": "agua",
+        "descripcion": "Solicitud de suministro de agua potable mediante pipa para colonias con desabasto temporal o sin red.",
+        "requisitos": [
+            "Identificación oficial del solicitante",
+            "Comprobante de domicilio dentro de la demarcación",
+            "Ubicación accesible para la pipa",
+        ],
+        "costo": "Gratuito (zonas sin red)",
+        "tiempo_estimado": "24 a 72 horas según demanda",
+        "vigencia": "No aplica",
+        "documentos": [],
+        "donde_acudir": "CESAC o módulo de Agua",
+        "horarios": "Lunes a domingo de 8:00 a 18:00 h",
+    },
+    {
+        "nombre": "Registro al Programa de Apoyos Sociales",
+        "dependencia": "Dirección de Desarrollo Social",
+        "area_id": None,
+        "descripcion": "Inscripción a los programas sociales de la alcaldía (becas, apoyo a adultos mayores y personas con discapacidad).",
+        "requisitos": [
+            "Acta de nacimiento",
+            "CURP actualizada",
+            "Comprobante de domicilio reciente",
+            "Identificación oficial",
+            "Comprobante que acredite el supuesto del programa",
+        ],
+        "costo": "Gratuito",
+        "tiempo_estimado": "Sujeto a convocatoria",
+        "vigencia": "Ciclo del programa",
+        "documentos": [
+            {"nombre": "Formato único de registro", "url": "/formatos/registro-apoyos-sociales.pdf"},
+            {"nombre": "Reglas de operación", "url": "/formatos/reglas-operacion-social.pdf"},
+        ],
+        "donde_acudir": "Dirección de Desarrollo Social",
+        "horarios": "Lunes a viernes de 9:00 a 15:00 h",
+    },
+    {
+        "nombre": "Reporte de Luminaria Apagada o Dañada",
+        "dependencia": "Subdirección de Alumbrado Público",
+        "area_id": "alumbrado",
+        "descripcion": "Reporte para el mantenimiento o sustitución de luminarias de alumbrado público fundidas, intermitentes o dañadas.",
+        "requisitos": [
+            "Ubicación de la luminaria (calle, número de poste si es visible)",
+            "Descripción de la falla (apagada, intermitente, cableado expuesto)",
+            "Datos de contacto para seguimiento (opcional)",
+        ],
+        "costo": "Gratuito",
+        "tiempo_estimado": "3 a 7 días hábiles",
+        "vigencia": "No aplica",
+        "documentos": [],
+        "donde_acudir": "CESAC o app Tu Alcald.IA",
+        "horarios": "Atención en línea 24/7",
+    },
+]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Avisos y campañas institucionales (por tenant)
+# id determinista "{prefix}-AVI-NN". tipo: aviso | campania.
+# ═══════════════════════════════════════════════════════════════════════════
+
+AVISOS_BASE = [
+    {
+        "titulo": "Suspensión programada de agua potable",
+        "cuerpo": "Por mantenimiento a la red de distribución, el suministro de agua potable se verá afectado en colonias de la zona alta. Se recomienda almacenar agua con anticipación. El servicio se restablecerá de forma gradual.",
+        "tipo": "aviso",
+        "area_id": "agua",
+        "segmento": "Zona alta de la demarcación",
+        "dias_offset": -2,
+        "activo": True,
+    },
+    {
+        "titulo": "Campaña de Descacharrización 2026",
+        "cuerpo": "Saca los cacharros que acumulan agua y previene el dengue. Las unidades recolectoras recorrerán las colonias según calendario. Participa y mantén tu hogar libre de criaderos de mosco.",
+        "tipo": "campania",
+        "area_id": "limpia",
+        "segmento": "Todas las colonias",
+        "dias_offset": -5,
+        "activo": True,
+    },
+    {
+        "titulo": "Jornada de Vacunación Antirrábica Canina y Felina",
+        "cuerpo": "Vacuna gratis a tu perro o gato en los módulos instalados en plazas y mercados públicos. Lleva a tu mascota con correa o en transportadora. No requiere cita.",
+        "tipo": "campania",
+        "area_id": None,
+        "segmento": "Población general",
+        "dias_offset": 3,
+        "activo": True,
+    },
+    {
+        "titulo": "Cierre vial por obra de repavimentación",
+        "cuerpo": "Por trabajos de repavimentación habrá cierre parcial a la circulación en vialidades primarias durante horario diurno. Se habilitarán rutas alternas señalizadas. Maneja con precaución y respeta los desvíos.",
+        "tipo": "aviso",
+        "area_id": "bacheo",
+        "segmento": "Automovilistas y transporte público",
+        "dias_offset": -1,
+        "activo": True,
+    },
+    {
+        "titulo": "Convocatoria a Presupuesto Participativo",
+        "cuerpo": "Decide en qué se invierten los recursos de tu colonia. Registra y vota por los proyectos de mejora de tu comunidad. Consulta los requisitos y fechas en los módulos de atención ciudadana.",
+        "tipo": "campania",
+        "area_id": None,
+        "segmento": "Vecinas y vecinos registrados",
+        "dias_offset": 7,
+        "activo": True,
+    },
+]
+
 EVIDENCIA_CAPTIONS = [
     "Sitio antes de iniciar trabajos",
     "Retiro de carpeta existente",
@@ -1198,8 +1511,11 @@ async def seed_all():
         print("[7/11] Seeding users...")
         user_area_rows = []
         for u in USERS:
-            password = f"{u['id']}.2026"
-            password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt(rounds=10)).decode()
+            # Password demo compartida (ver DEMO_PASSWORD arriba). Salt único por
+            # usuario; rounds=12 unificado con app/core/security.py.
+            password_hash = _bcrypt.hashpw(
+                DEMO_PASSWORD.encode(), _bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+            ).decode()
             await session.execute(text("""
                 INSERT INTO users (id, tenant_id, email, nombre, iniciales, cargo, role, avatar_tone, password_hash, is_active)
                 VALUES (:id, :tenant_id, :email, :nombre, :iniciales, :cargo, :role, :avatar_tone, :password_hash, true)
@@ -1227,6 +1543,7 @@ async def seed_all():
             """), row)
         await session.commit()
         print(f"         {len(USERS)} users, {len(user_area_rows)} user_areas")
+        print(f"         demo password (todos los usuarios): {DEMO_PASSWORD!r}")
 
         # ── 8. Cuadrillas ────────────────────────────────────────────────
         print("[8/11] Seeding cuadrillas...")
@@ -1367,6 +1684,120 @@ async def seed_all():
         await session.commit()
         print(f"         {len(all_obras)} obras ({len(obras_mc)} MC + {len(obras_tl)} TL)")
 
+        # ── 9b. Compromisos de gobierno ───────────────────────────────────
+        print("[9b]  Seeding compromisos de gobierno...")
+        n_compromisos = 0
+        for t in TENANTS:
+            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            for idx, c in enumerate(COMPROMISOS_BASE):
+                cid = f"{prefix}-CMP-{str(idx + 1).zfill(2)}"
+                fecha_objetivo = _ms_to_dt(NOW_MS + c["dias_objetivo"] * DAY_MS)
+                await session.execute(text("""
+                    INSERT INTO compromisos (id, tenant_id, titulo, descripcion,
+                        area_id, meta, avance_pct, estado, fecha_objetivo)
+                    VALUES (:id, :tenant_id, :titulo, :descripcion,
+                        :area_id, :meta, :avance_pct, :estado, :fecha_objetivo)
+                    ON CONFLICT (id) DO NOTHING
+                """), {
+                    "id": cid,
+                    "tenant_id": t["id"],
+                    "titulo": c["titulo"][:200],
+                    "descripcion": c["descripcion"],
+                    "area_id": c["area_id"],
+                    "meta": c["meta"][:300] if c["meta"] else None,
+                    "avance_pct": c["avance_pct"],
+                    "estado": c["estado"],
+                    "fecha_objetivo": fecha_objetivo,
+                })
+                n_compromisos += 1
+        await session.commit()
+        print(f"         {n_compromisos} compromisos ({len(COMPROMISOS_BASE)} por tenant)")
+
+        # ── 9b-2. Trámites y servicios (catálogo público) ─────────────────────
+        import json as _json_tramites
+        print("[9b-2] Seeding trámites y servicios...")
+        n_tramites = 0
+        for t in TENANTS:
+            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            for idx, tr in enumerate(TRAMITES_BASE):
+                tid = f"{prefix}-TRM-{str(idx + 1).zfill(2)}"
+                dependencia = f"{tr['dependencia']} · {t['nombre_corto']}"
+                await session.execute(text("""
+                    INSERT INTO tramites (id, tenant_id, nombre, dependencia, area_id,
+                        descripcion, requisitos, costo, tiempo_estimado, vigencia,
+                        documentos, donde_acudir, horarios)
+                    VALUES (:id, :tenant_id, :nombre, :dependencia, :area_id,
+                        :descripcion, CAST(:requisitos AS jsonb), :costo, :tiempo_estimado,
+                        :vigencia, CAST(:documentos AS jsonb), :donde_acudir, :horarios)
+                    ON CONFLICT (id) DO NOTHING
+                """), {
+                    "id": tid,
+                    "tenant_id": t["id"],
+                    "nombre": tr["nombre"][:200],
+                    "dependencia": dependencia[:160],
+                    "area_id": tr.get("area_id"),
+                    "descripcion": tr.get("descripcion"),
+                    "requisitos": _json_tramites.dumps(tr.get("requisitos", [])),
+                    "costo": tr.get("costo"),
+                    "tiempo_estimado": tr.get("tiempo_estimado"),
+                    "vigencia": tr.get("vigencia"),
+                    "documentos": _json_tramites.dumps(tr.get("documentos", [])),
+                    "donde_acudir": (tr.get("donde_acudir") or None),
+                    "horarios": tr.get("horarios"),
+                })
+                n_tramites += 1
+        await session.commit()
+        print(f"         {n_tramites} trámites ({len(TRAMITES_BASE)} por tenant)")
+
+        # ── 9b-3. Avisos y campañas institucionales ───────────────────────────
+        print("[9b-3] Seeding avisos y campañas...")
+        n_avisos = 0
+        for t in TENANTS:
+            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            for idx, av in enumerate(AVISOS_BASE):
+                aid = f"{prefix}-AVI-{str(idx + 1).zfill(2)}"
+                fecha = _ms_to_dt(NOW_MS + av["dias_offset"] * DAY_MS)
+                await session.execute(text("""
+                    INSERT INTO avisos (id, tenant_id, titulo, cuerpo, tipo, area_id,
+                        segmento, fecha, activo)
+                    VALUES (:id, :tenant_id, :titulo, :cuerpo, :tipo, :area_id,
+                        :segmento, :fecha, :activo)
+                    ON CONFLICT (id) DO NOTHING
+                """), {
+                    "id": aid,
+                    "tenant_id": t["id"],
+                    "titulo": av["titulo"][:200],
+                    "cuerpo": av["cuerpo"],
+                    "tipo": av["tipo"],
+                    "area_id": av.get("area_id"),
+                    "segmento": (av.get("segmento") or None),
+                    "fecha": fecha,
+                    "activo": av.get("activo", True),
+                })
+                n_avisos += 1
+        await session.commit()
+        print(f"         {n_avisos} avisos ({len(AVISOS_BASE)} por tenant)")
+
+        # ── 9c. tipo_afectacion en calles afectadas (backfill determinista) ──
+        print("[9c]  Asignando tipo_afectacion a calles afectadas...")
+        n_calles_afect = 0
+        for from_estado, tipo in CIERRE_TO_TIPO_AFECTACION.items():
+            res = await session.execute(text("""
+                UPDATE obra_calles_afectadas
+                SET tipo_afectacion = :tipo
+                WHERE estado = :estado AND tipo_afectacion IS NULL
+            """), {"tipo": tipo, "estado": from_estado})
+            n_calles_afect += res.rowcount or 0
+        # Cualquier calle restante sin mapeo conocido -> 'parcial' (determinista).
+        res = await session.execute(text("""
+            UPDATE obra_calles_afectadas
+            SET tipo_afectacion = 'parcial'
+            WHERE tipo_afectacion IS NULL
+        """))
+        n_calles_afect += res.rowcount or 0
+        await session.commit()
+        print(f"         {n_calles_afect} calles afectadas con tipo_afectacion")
+
         # ── 10. Reportes ──────────────────────────────────────────────────
         print("[10/11] Generating and seeding reportes...")
         reportes_mc = generate_reportes_for_tenant("magdalena-contreras", REPORTES_SEED, REPORTES_TOTAL_MC)
@@ -1459,6 +1890,10 @@ async def seed_all():
             """), n)
         await session.commit()
         print(f"         {len(all_notifs)} notificaciones")
+
+        # ── 12. Campo (integrantes, turnos, tareas, ubicaciones) ──────────────
+        print("[12/12] Seeding módulo de campo (monitor en vivo)...")
+        await seed_campo(session, all_reportes)
 
     await engine.dispose()
     print("\nSeed complete.")
@@ -1568,6 +2003,225 @@ def generate_notificaciones(users: list[dict], all_reportes: list[dict], all_obr
             notifs.append({**n, "user_id": u["id"], "tenant_id": tenant_id})
 
     return notifs
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Campo (Fase 2): integrantes, turnos, tareas, ubicaciones
+# Da "vida" al monitor en vivo de cuadrillas. Idempotente: si ya existen
+# integrantes para los tenants, se omite todo el bloque.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Nombres completos para la nómina de campo (jefes + operarios).
+INTEGRANTE_NOMBRES = [
+    "Ricardo Ñúñez Saldaña", "Gerardo Peña Olvera", "Marcos Toledo Rey",
+    "Efraín Castro Lima", "Ismael Vera Pacheco", "Joaquín Mora Reyes",
+    "Abel Ruíz Tovar", "Saúl Medina Cano", "Raúl Ibarra Vela",
+    "Osêr Tapia Luna", "Felipe Acosta Rico", "Gerónimo Salas Mejía",
+    "Damián Rosales Cruz", "Mateo Fuentes Gil", "Bruno Aguilar Soto",
+    "Nicolás Herrera Paz", "Teodoro Lara Vidal", "Emiliano Cuevas Roa",
+    "Bernardo Gil Anaya", "Aarón Ramos Cid", "Lorenzo Vega Rubio",
+    "Genaro Muñoz Real", "Cipriano Díaz Lugo", "Salvador Nava Pino",
+]
+
+# Pasos de checklist por categoría de reporte (operación de campo realista).
+CHECKLIST_POR_CATEGORIA = {
+    "bacheo":      ["Acordonar área de trabajo", "Retirar material suelto", "Aplicar mezcla asfáltica", "Compactar y liberar vialidad"],
+    "alumbrado":   ["Verificar tablero eléctrico", "Reemplazar luminaria", "Probar encendido", "Registrar folio cerrado"],
+    "limpia":      ["Cargar residuos al camión", "Barrer y limpiar el punto", "Verificar disposición final"],
+    "seguridad":   ["Inspeccionar la zona", "Levantar evidencia fotográfica", "Coordinar con SSC-CDMX", "Reportar a base"],
+    "agua":        ["Cerrar válvula de paso", "Reparar fuga", "Restablecer suministro", "Probar presión"],
+    "parques":     ["Evaluar mobiliario dañado", "Reparar o reemplazar", "Limpiar el área", "Cierre con foto"],
+    "arboles":     ["Acordonar perímetro", "Realizar poda certificada", "Retirar ramas", "Liberar paso peatonal"],
+    "drenaje":     ["Destapar coladera", "Desazolvar registro", "Verificar flujo", "Cerrar el reporte"],
+    "semaforos":   ["Diagnosticar el equipo", "Reparar o reprogramar", "Probar fases", "Liberar el cruce"],
+    "comercio_vp": ["Notificar al comerciante", "Levantar acta de inspección", "Despejar la vía", "Registrar resultado"],
+}
+CHECKLIST_DEFAULT = ["Llegar al sitio", "Atender la incidencia", "Registrar evidencia", "Cerrar la tarea"]
+
+# Estados de tarea de campo asignados ciclicamente a la muestra de reportes.
+TAREA_ESTADOS = ["pendiente", "en_ruta", "en_sitio"]
+
+
+def _campo_rand(seed: int):
+    return mulberry32(seed)
+
+
+def _telefono(rand) -> str:
+    return "55" + "".join(str(math.floor(rand() * 10)) for _ in range(8))
+
+
+def _checklist_for(categoria_id: str, n_pasos: int) -> list[dict]:
+    pasos = CHECKLIST_POR_CATEGORIA.get(categoria_id, CHECKLIST_DEFAULT)
+    pasos = pasos[:n_pasos] if len(pasos) >= n_pasos else pasos
+    return [{"paso": p, "hecho": False} for p in pasos]
+
+
+async def seed_campo(session, all_reportes: list[dict]) -> None:
+    """Siembra datos de campo (Fase 2) para el monitor en vivo.
+
+    Idempotente: si ya hay integrantes sembrados, no hace nada.
+    """
+    import json
+    import uuid as _uuid
+
+    existing = await session.execute(text("SELECT count(*) FROM integrantes"))
+    if (existing.scalar() or 0) > 0:
+        print("         integrantes ya existen, se omite el seed de campo.")
+        return
+
+    rand = _campo_rand(20260618)
+
+    # Cuadrillas reales de la DB (id, tenant_id).
+    cuad_rows = (await session.execute(
+        text("SELECT id, tenant_id FROM cuadrillas ORDER BY tenant_id, id")
+    )).fetchall()
+
+    # Jefes de cuadrilla disponibles por tenant (para vincular user_id).
+    jefe_rows = (await session.execute(
+        text("SELECT id, tenant_id FROM users WHERE role = 'jefe_cuadrilla'")
+    )).fetchall()
+    jefes_por_tenant: dict[str, list[str]] = {}
+    for uid, tid in jefe_rows:
+        jefes_por_tenant.setdefault(tid, []).append(uid)
+
+    n_integrantes = n_turnos = n_tareas = n_ubic = 0
+    nombre_idx = 0
+    # Integrante "jefe" por cuadrilla, para asociar tareas/ubicaciones.
+    jefe_integrante_por_cuad: dict[str, str] = {}
+    # Para colocar ubicaciones cerca de las tareas reales.
+    coords_por_cuad: dict[str, list[tuple[float, float]]] = {}
+
+    # ── Integrantes: 3-5 por cuadrilla (1 jefe) ───────────────────────────────
+    for idx, (cuad_id, tenant_id) in enumerate(cuad_rows):
+        total = 3 + math.floor(rand() * 3)  # 3..5
+        jefe_user_id = None
+        # El primer cuadrilla de cada tenant vincula al user jefe_cuadrilla real.
+        jefes = jefes_por_tenant.get(tenant_id, [])
+        if jefes and idx % 8 == 1:  # una cuadrilla por tenant lleva la cuenta real
+            jefe_user_id = jefes[0]
+        for j in range(total):
+            es_jefe = j == 0
+            nombre = INTEGRANTE_NOMBRES[nombre_idx % len(INTEGRANTE_NOMBRES)]
+            nombre_idx += 1
+            iid = str(_uuid.uuid4())
+            if es_jefe:
+                jefe_integrante_por_cuad[cuad_id] = iid
+            await session.execute(text("""
+                INSERT INTO integrantes (id, cuadrilla_id, tenant_id, user_id, nombre, rol_campo, telefono, activo)
+                VALUES (:id, :cuadrilla_id, :tenant_id, :user_id, :nombre, :rol_campo, :telefono, true)
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id": iid,
+                "cuadrilla_id": cuad_id,
+                "tenant_id": tenant_id,
+                "user_id": jefe_user_id if es_jefe else None,
+                "nombre": nombre,
+                "rol_campo": "jefe" if es_jefe else "integrante",
+                "telefono": _telefono(rand),
+            })
+            n_integrantes += 1
+
+    # ── Turnos abiertos para ~la mitad de las cuadrillas ──────────────────────
+    cuadrillas_activas: list[tuple[str, str]] = []
+    for idx, (cuad_id, tenant_id) in enumerate(cuad_rows):
+        if idx % 2 == 0:  # ~la mitad
+            cuadrillas_activas.append((cuad_id, tenant_id))
+            await session.execute(text("""
+                INSERT INTO turnos (id, tenant_id, cuadrilla_id, inicio, fin, estado)
+                VALUES (:id, :tenant_id, :cuadrilla_id, :inicio, NULL, 'abierto')
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id": str(_uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "cuadrilla_id": cuad_id,
+                # Inicio hace 2-6 horas (referido a NOW del seed).
+                "inicio": _ms_to_dt(NOW_MS - round((2 + rand() * 4) * 3_600_000)),
+            })
+            n_turnos += 1
+
+    # ── Tareas: muestra de reportes asignados/en proceso con cuadrilla ────────
+    rep_rows = (await session.execute(text("""
+        SELECT id, tenant_id, cuadrilla_id, categoria_id, titulo, lat, lng, colonia_id, prioridad
+        FROM reportes
+        WHERE cuadrilla_id IS NOT NULL AND estado IN ('asignado', 'en_proceso')
+        ORDER BY fecha_creacion DESC
+        LIMIT 50
+    """))).fetchall()
+
+    for i, (rid, tenant_id, cuad_id, categoria_id, titulo, lat, lng, colonia_id, prioridad) in enumerate(rep_rows):
+        estado = TAREA_ESTADOS[i % len(TAREA_ESTADOS)]
+        n_pasos = 3 + (i % 2)  # 3 o 4 pasos
+        checklist = _checklist_for(categoria_id, n_pasos)
+        # En tareas en_sitio, marca algunos pasos como hechos.
+        if estado == "en_sitio" and checklist:
+            checklist[0]["hecho"] = True
+        integrante_id = jefe_integrante_por_cuad.get(cuad_id)
+        await session.execute(text("""
+            INSERT INTO tareas (id, tenant_id, cuadrilla_id, integrante_id, origen_tipo,
+                reporte_id, obra_id, titulo, descripcion, prioridad, estado, orden_ruta,
+                lat, lng, colonia_id, instrucciones, checklist)
+            VALUES (:id, :tenant_id, :cuadrilla_id, :integrante_id, 'reporte',
+                :reporte_id, NULL, :titulo, NULL, :prioridad, :estado, :orden_ruta,
+                :lat, :lng, :colonia_id, :instrucciones, CAST(:checklist AS jsonb))
+            ON CONFLICT (id) DO NOTHING
+        """), {
+            "id": str(_uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "cuadrilla_id": cuad_id,
+            "integrante_id": integrante_id,
+            "reporte_id": rid,
+            "titulo": (titulo or "Tarea de campo")[:200],
+            "prioridad": prioridad or "media",
+            "estado": estado,
+            "orden_ruta": (i % 6) + 1,
+            "lat": lat,
+            "lng": lng,
+            "colonia_id": colonia_id,
+            "instrucciones": "Atender en sitio y documentar con evidencia antes/después.",
+            "checklist": json.dumps(checklist),
+        })
+        n_tareas += 1
+        if lat is not None and lng is not None:
+            coords_por_cuad.setdefault(cuad_id, []).append((float(lat), float(lng)))
+
+    # ── Ubicaciones: 2-3 pines recientes por cuadrilla activa ─────────────────
+    for cuad_id, tenant_id in cuadrillas_activas:
+        coords = coords_por_cuad.get(cuad_id)
+        # Centro de referencia: cerca de una tarea de la cuadrilla, si existe.
+        if coords:
+            base_lat, base_lng = coords[0]
+        else:
+            # Sin tareas: usa el centro del tenant.
+            base_lng, base_lat = next(
+                (t["center"] for t in TENANTS if t["id"] == tenant_id),
+                (-99.21, 19.27),
+            )
+        n_pines = 2 + math.floor(rand() * 2)  # 2..3
+        integrante_id = jefe_integrante_por_cuad.get(cuad_id)
+        for k in range(n_pines):
+            jlat = base_lat + (rand() - 0.5) * 0.004
+            jlng = base_lng + (rand() - 0.5) * 0.004
+            await session.execute(text("""
+                INSERT INTO ubicaciones (id, tenant_id, cuadrilla_id, integrante_id, lat, lng, timestamp)
+                VALUES (:id, :tenant_id, :cuadrilla_id, :integrante_id, :lat, :lng, :ts)
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id": str(_uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "cuadrilla_id": cuad_id,
+                "integrante_id": integrante_id,
+                "lat": jlat,
+                "lng": jlng,
+                # Pines de los últimos ~30 min (más reciente con k mayor).
+                "ts": _ms_to_dt(NOW_MS - round((n_pines - k) * (5 + rand() * 5) * 60_000)),
+            })
+            n_ubic += 1
+
+    await session.commit()
+    print(
+        f"         {n_integrantes} integrantes, {n_turnos} turnos, "
+        f"{n_tareas} tareas, {n_ubic} ubicaciones"
+    )
 
 
 def main():

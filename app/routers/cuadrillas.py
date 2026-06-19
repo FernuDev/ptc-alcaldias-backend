@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import AdminUser, Audit, CurrentUser, DB
+from app.core.dependencies import DB, AdminUser, Audit, CurrentUser
 from app.schemas.cuadrilla import CuadrillaCreate, CuadrillaRead, CuadrillaUpdate
 from app.services import cuadrilla_service
 

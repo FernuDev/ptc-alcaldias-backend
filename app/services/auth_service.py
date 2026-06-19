@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +54,7 @@ async def authenticate(
         user_id=user.id,
         token_hash=refresh_hash,
         family_id=family_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=audit.ip_address,
         user_agent=audit.user_agent,
     )
@@ -104,7 +104,7 @@ async def refresh_tokens(
             update(RefreshToken)
             .where(RefreshToken.family_id == rt.family_id)
             .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(timezone.utc))
+            .values(revoked_at=datetime.now(UTC))
         )
         await audit.log(
             action="token_reuse_detected",
@@ -114,7 +114,7 @@ async def refresh_tokens(
         )
         raise UnauthorizedError("Token reutilizado — sesion revocada")
 
-    if rt.expires_at < datetime.now(timezone.utc):
+    if rt.expires_at < datetime.now(UTC):
         raise UnauthorizedError("Refresh token expirado")
 
     if rt.replaced_by is not None:
@@ -123,7 +123,7 @@ async def refresh_tokens(
             update(RefreshToken)
             .where(RefreshToken.family_id == rt.family_id)
             .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(timezone.utc))
+            .values(revoked_at=datetime.now(UTC))
         )
         raise UnauthorizedError("Token reutilizado — sesion revocada")
 
@@ -139,7 +139,7 @@ async def refresh_tokens(
         user_id=user.id,
         token_hash=new_hash,
         family_id=rt.family_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=audit.ip_address,
         user_agent=audit.user_agent,
     )
@@ -148,7 +148,7 @@ async def refresh_tokens(
 
     # Mark old token as replaced
     rt.replaced_by = new_rt.id
-    rt.revoked_at = datetime.now(timezone.utc)
+    rt.revoked_at = datetime.now(UTC)
 
     area_ids = [a.id for a in user.areas]
     access_token = create_access_token(user.id, user.tenant_id, user.role, area_ids)
@@ -173,7 +173,7 @@ async def logout(
         update(RefreshToken)
         .where(RefreshToken.user_id == user_id)
         .where(RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=datetime.now(timezone.utc))
+        .values(revoked_at=datetime.now(UTC))
     )
     await audit.log(
         action="logout",
@@ -220,7 +220,7 @@ async def register_ciudadano(
         user_id=user.id,
         token_hash=refresh_hash,
         family_id=family_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=audit.ip_address,
         user_agent=audit.user_agent,
     )
