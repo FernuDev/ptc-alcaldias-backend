@@ -26,9 +26,15 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY . .
 
+# El paquete `app` vive en /app; necesario para que `alembic` (env.py importa
+# app.core.config) y cualquier herramienta resuelvan los imports.
+ENV PYTHONPATH=/app
+
 EXPOSE 8000
 
 # Aplica migraciones pendientes antes de arrancar (idempotente: si no hay
 # pendientes, no hace nada). Así el esquema de la BD siempre coincide con el
 # código desplegado. Las migraciones son aditivas (tablas/columnas nuevas).
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Se usa `python -m alembic` (no el script `alembic`) para que el cwd (/app)
+# entre al sys.path aunque PYTHONPATH no estuviera.
+CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
