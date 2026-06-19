@@ -286,14 +286,27 @@ _CHECKLIST = [
     {"paso": "Ejecutar el trabajo", "hecho": False},
     {"paso": "Capturar evidencia antes/después", "hecho": False},
 ]
+_CHECKLIST_DONE = [
+    {"paso": "Revisar el sitio", "hecho": True},
+    {"paso": "Ejecutar el trabajo", "hecho": True},
+    {"paso": "Capturar evidencia antes/después", "hecho": True},
+]
 _TAREA_ESTADO = {"asignado": ["pendiente"], "en_proceso": ["en_ruta", "en_sitio"]}
 
 
-async def seed_tareas_desde_reportes(session, por_tenant: int = 60) -> int:
-    """Fallback de tareas de campo cuando `seed_campo` no encontró reportes ya
-    turnados: turna una muestra de reportes 'asignado'/'en_proceso' a una
-    cuadrilla y crea su tarea. Idempotente (no corre si ya hay tareas; ids
-    de tarea deterministas TK-<reporte_id>).
+async def seed_tareas_desde_reportes(session, abiertas_por_tenant: int = 60) -> int:
+    """Fallback de tareas de campo: turna reportes a cuadrillas/integrantes y crea
+    las tareas que alimentan Monitor y los Scorecards de desempeño (REQ-06).
+
+    * Reportes 'asignado'/'en_proceso' → tareas ABIERTAS (carga viva), repartidas
+      entre TODOS los integrantes de cada cuadrilla (no solo el jefe), para que la
+      carga vs. capacidad quede balanceada (antes el jefe acumulaba el 100%).
+    * Reportes 'resuelto'/'cerrado' → tareas CERRADAS ligadas al reporte, también
+      repartidas entre integrantes: sin ellas los scorecards salen en cero, porque
+      'resueltos / tiempo medio / %SLA' por persona se atribuyen vía
+      ``Tarea.integrante_id`` + ``Tarea.reporte_id`` sobre reportes ya cerrados.
+
+    Idempotente: no corre si ya hay tareas; ids deterministas TK-/TKC-<reporte_id>.
     """
     if (await session.execute(text("SELECT count(*) FROM tareas"))).scalar():
         return 0
@@ -306,18 +319,28 @@ async def seed_tareas_desde_reportes(session, por_tenant: int = 60) -> int:
             {"t": tid})).scalars().all()
         if not cuads:
             continue
-        jefe = {}
+        # Integrantes activos por cuadrilla (jefe primero) + contadores por cuadrilla
+        # para repartir parejo entre las personas.
+        ints: dict[str, list[str]] = {}
         for cid in cuads:
-            jefe[cid] = (await session.execute(text(
-                "SELECT id FROM integrantes WHERE cuadrilla_id=:c AND rol_campo='jefe' LIMIT 1"
-            ), {"c": cid})).scalar()
+            ints[cid] = (await session.execute(text(
+                "SELECT id FROM integrantes WHERE cuadrilla_id=:c AND activo "
+                "ORDER BY rol_campo DESC, id"), {"c": cid})).scalars().all()
+        cnt_open = {c: 0 for c in cuads}
+        cnt_closed = {c: 0 for c in cuads}
+
+        # 1) Tareas ABIERTAS de reportes vivos.
         reps = (await session.execute(text("""
             SELECT id, estado, titulo, lat, lng, colonia_id, prioridad FROM reportes
             WHERE tenant_id=:t AND estado IN ('asignado','en_proceso') AND cuadrilla_id IS NULL
             ORDER BY fecha_creacion DESC LIMIT :lim
-        """), {"t": tid, "lim": por_tenant})).fetchall()
+        """), {"t": tid, "lim": abiertas_por_tenant})).fetchall()
         for i, (rid, estado, titulo, lat, lng, col, prio) in enumerate(reps):
             cid = cuads[i % len(cuads)]
+            lst = ints.get(cid) or []
+            ig = lst[cnt_open[cid] % len(lst)] if lst else None
+            if lst:
+                cnt_open[cid] += 1
             await session.execute(
                 text("UPDATE reportes SET cuadrilla_id=:c WHERE id=:r"),
                 {"c": cid, "r": rid})
@@ -330,10 +353,42 @@ async def seed_tareas_desde_reportes(session, por_tenant: int = 60) -> int:
                     CAST(:chk AS jsonb),:now,:now)
                 ON CONFLICT (id) DO NOTHING
             """), {
-                "id": f"TK-{rid}", "t": tid, "c": cid, "ig": jefe.get(cid), "r": rid,
+                "id": f"TK-{rid}", "t": tid, "c": cid, "ig": ig, "r": rid,
                 "tit": (titulo or "Tarea de campo")[:200], "p": prio or "media",
                 "est": opts[i % len(opts)], "ord": i + 1, "lat": lat, "lng": lng,
                 "col": col, "chk": json.dumps(_CHECKLIST), "now": NOW,
+            })
+            n += 1
+
+        # 2) Tareas CERRADAS de reportes resueltos/cerrados → alimentan scorecards.
+        resueltos = (await session.execute(text("""
+            SELECT id, titulo, lat, lng, colonia_id, prioridad, fecha_cierre FROM reportes
+            WHERE tenant_id=:t AND estado IN ('resuelto','cerrado')
+            ORDER BY fecha_cierre DESC NULLS LAST
+        """), {"t": tid})).fetchall()
+        for i, (rid, titulo, lat, lng, col, prio, fcierre) in enumerate(resueltos):
+            cid = cuads[i % len(cuads)]
+            lst = ints.get(cid) or []
+            if not lst:
+                continue
+            ig = lst[cnt_closed[cid] % len(lst)]
+            cnt_closed[cid] += 1
+            await session.execute(text(
+                "UPDATE reportes SET cuadrilla_id=:c WHERE id=:r AND cuadrilla_id IS NULL"),
+                {"c": cid, "r": rid})
+            await session.execute(text("""
+                INSERT INTO tareas (id, tenant_id, cuadrilla_id, integrante_id, origen_tipo,
+                    reporte_id, obra_id, titulo, descripcion, prioridad, estado, orden_ruta,
+                    lat, lng, colonia_id, instrucciones, checklist, created_at, updated_at,
+                    fecha_cierre)
+                VALUES (:id,:t,:c,:ig,'reporte',:r,NULL,:tit,NULL,:p,'cerrada',NULL,:lat,:lng,
+                    :col,NULL,CAST(:chk AS jsonb),:now,:now,:fc)
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id": f"TKC-{rid}", "t": tid, "c": cid, "ig": ig, "r": rid,
+                "tit": (titulo or "Tarea de campo")[:200], "p": prio or "media",
+                "lat": lat, "lng": lng, "col": col,
+                "chk": json.dumps(_CHECKLIST_DONE), "now": NOW, "fc": fcierre or NOW,
             })
             n += 1
     await session.commit()
