@@ -102,7 +102,15 @@ async def calc_kpis(user: User, db: AsyncSession) -> KpisResponse:
 
 async def volumen_por_dia(user: User, db: AsyncSession, dias: int = 30) -> list[VolumenDia]:
     filters = _base_filter(user)
-    since = datetime.now(UTC) - timedelta(days=dias)
+
+    # La ventana se ancla al reporte más reciente del dataset, no al reloj real.
+    # Los datos de demo están "congelados" en una fecha fija; usar datetime.now()
+    # hacía que la ventana de N días no solapara con ningún reporte y la gráfica
+    # quedara vacía. Anclando a max(fecha_creacion) el volumen funciona sin
+    # importar cuánto haya derivado la fecha real respecto al seed.
+    ref_q = select(func.max(Reporte.fecha_creacion)).where(*filters)
+    ref = (await db.execute(ref_q)).scalar() or datetime.now(UTC)
+    since = ref - timedelta(days=dias)
 
     recibidos_q = (
         select(

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.agente import analytics
 from app.models.user import User
+from app.services import stats_service
 
 
 async def _user(db, uid: str) -> User:
@@ -36,3 +37,14 @@ async def test_kpis_devuelve_objeto(db):
     admin = await _user(db, "mc-admin")
     datos = await analytics.ejecutar_intent("kpis", admin, db)
     assert isinstance(datos, dict) and datos
+
+
+async def test_volumen_anclado_al_dato_mas_reciente(db):
+    # Regresión: el volumen ancla la ventana a max(fecha_creacion), no al reloj
+    # real. Con datos de demo "congelados" en el pasado, una ventana basada en
+    # datetime.now() no solaparía y la gráfica quedaría vacía. Una ventana de 7
+    # días desde el reporte más reciente debe incluir al menos ese día.
+    admin = await _user(db, "mc-admin")
+    datos = await stats_service.volumen_por_dia(admin, db, dias=7)
+    assert datos, "el volumen no debe quedar vacío con datos sembrados"
+    assert sum(d.recibidos for d in datos) > 0
