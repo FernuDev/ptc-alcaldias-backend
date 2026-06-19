@@ -1145,7 +1145,34 @@ def _avance_por_estado(estado: str, rand) -> int:
     return 100  # concluida
 
 
-def _generate_calles_afectadas(obra_id: str, estado: str, rand) -> list[dict]:
+def _calle_coords(calle_id: str, clng: float, clat: float) -> str:
+    """Polilínea corta determinista cerca del centro de la obra, como JSON string
+    (placeholder de geometría de calle afectada; el frontend la dibuja como
+    cierre vial).
+
+    Usa su propio RNG sembrado por el id de la calle, así que NO consume del
+    `rand` del seed y la secuencia determinista del resto no cambia.
+    """
+    import hashlib
+    import json
+    import random as _random
+
+    r = _random.Random(int(hashlib.md5(calle_id.encode()).hexdigest()[:8], 16))
+    bx = clng + r.uniform(-0.0035, 0.0035)
+    by = clat + r.uniform(-0.0035, 0.0035)
+    a = r.uniform(0, 2 * math.pi)
+    step = 0.00085  # ~90 m por segmento
+    pts: list[list[float]] = []
+    for k in range(r.choice([2, 3, 3, 4])):
+        pts.append([round(bx + math.cos(a) * step * k, 6),
+                    round(by + math.sin(a) * step * k, 6)])
+        a += r.uniform(-0.4, 0.4)  # ligera curva
+    return json.dumps(pts)
+
+
+def _generate_calles_afectadas(
+    obra_id: str, estado: str, rand, base_lng: float = 0.0, base_lat: float = 0.0
+) -> list[dict]:
     """Generate calles afectadas.
 
     Note: the TS version uses a precomputed street graph (obras-streets.json)
@@ -1170,7 +1197,7 @@ def _generate_calles_afectadas(obra_id: str, estado: str, rand) -> list[dict]:
             "obra_id": obra_id,
             "nombre": f"Calle afectada {ci + 1}",
             "estado": cierre_estado,
-            "coordenadas": None,
+            "coordenadas": _calle_coords(f"{obra_id}-CA{ci + 1}", base_lng, base_lat),
             "fecha_inicio": _ms_to_dt(inicio_ms),
             "fecha_fin_estimada": _ms_to_dt(fin_ms),
             "alternativas_viales": None,
@@ -1310,7 +1337,10 @@ def generate_obras_for_tenant(tenant_id: str, seed: int, total: int) -> list[dic
         contratista_id = None if estado == "planeacion" else CONTRATISTAS[math.floor(rand() * len(CONTRATISTAS))]["id"]
 
         # Generate center and calles (simplified -- no street graph)
-        calles = _generate_calles_afectadas(f"{prefix}-OB-{str(i + 1).zfill(3)}", estado, rand)
+        calles = _generate_calles_afectadas(
+            f"{prefix}-OB-{str(i + 1).zfill(3)}", estado, rand,
+            colonia["center_lng"], colonia["center_lat"],
+        )
         center_lng, center_lat = _jitter_coord(colonia["center_lng"], colonia["center_lat"], colonia["area_ha"], rand, factor=0.7)
 
         id_num = str(i + 1).zfill(3)
@@ -1653,7 +1683,7 @@ async def seed_all():
             for ca in o["calles_afectadas"]:
                 await session.execute(text("""
                     INSERT INTO obra_calles_afectadas (id, obra_id, nombre, estado, coordenadas, fecha_inicio, fecha_fin_estimada, alternativas_viales)
-                    VALUES (:id, :obra_id, :nombre, :estado, :coordenadas, :fecha_inicio, :fecha_fin_estimada, :alternativas_viales)
+                    VALUES (:id, :obra_id, :nombre, :estado, CAST(:coordenadas AS jsonb), :fecha_inicio, :fecha_fin_estimada, :alternativas_viales)
                     ON CONFLICT (id) DO NOTHING
                 """), ca)
 
