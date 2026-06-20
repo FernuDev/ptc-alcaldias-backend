@@ -5,6 +5,18 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class TicketEspejoRead(BaseModel):
+    """Ticket de cuadrilla (tarea de campo) espejo de una tarea de proyecto."""
+
+    id: str
+    estado: str  # pendiente | en_ruta | en_sitio | cerrada
+    cuadrilla_id: str | None = None
+    cierre_nota: str | None = None
+    fecha_cierre: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ProyectoTareaRead(BaseModel):
     id: str
     nombre: str
@@ -15,8 +27,14 @@ class ProyectoTareaRead(BaseModel):
     depende_de: str | None = None
     responsable: str | None = None
     orden: int
+    # Ticket de cuadrilla generado desde esta tarea (puente REQ-07), si existe.
+    ticket: TicketEspejoRead | None = None
 
     model_config = {"from_attributes": True}
+
+
+class GenerarTicketInput(BaseModel):
+    cuadrilla_id: str | None = Field(None, max_length=10)
 
 
 class ProyectoListItem(BaseModel):
@@ -40,6 +58,7 @@ class ProyectoRead(ProyectoListItem):
     compromiso_id: str | None = None
     pdm_eje: str | None = None
     origen_zona: str | None = None
+    num_reportes_vinculados: int = 0
     tareas: list[ProyectoTareaRead] = []
 
 
@@ -120,6 +139,11 @@ class ExpedienteZona(BaseModel):
     diagnostico: str
     recomendacion: str
     costo_estimado: float
+    direccion_lider: str | None = None
+    # Coordenadas [lng, lat] de los reportes del cluster (para el mapa MapLibre).
+    puntos: list[list[float]] = []
+    # IDs de los reportes del cluster (para vincularlos al proyecto al convertir).
+    reporte_ids: list[str] = []
     ya_es_proyecto: bool = False
 
 
@@ -130,6 +154,7 @@ class ConvertirZonaInput(BaseModel):
     recomendacion: str
     costo_estimado: float
     total_reportes: int = 0
+    reporte_ids: list[str] = []
 
 
 class ConectorInterop(BaseModel):

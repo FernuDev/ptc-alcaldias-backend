@@ -82,9 +82,16 @@ async def calc_kpis(user: User, db: AsyncSession) -> KpisResponse:
     )
     avg_hours = (await db.execute(avg_q)).scalar() or 0
 
-    # SLA risk: open reports exceeding their priority SLA limit (por tenant)
+    # SLA risk: reportes abiertos que rebasan su límite de SLA por prioridad.
+    # Se ancla al "hoy" del dataset (el reporte más reciente) y NO al reloj real:
+    # los datos de demo están congelados en una fecha fija, así que medir la edad
+    # contra now() iba derivando hasta marcar TODOS los abiertos como vencidos.
+    # Mismo criterio que volumen_por_dia.
     sla_case = _sla_case(await _sla_horas(user, db))
-    age_hours = extract("epoch", now - Reporte.fecha_creacion) / 3600
+    ref_now = (
+        await db.execute(select(func.max(Reporte.fecha_creacion)).where(*filters))
+    ).scalar() or now
+    age_hours = extract("epoch", ref_now - Reporte.fecha_creacion) / 3600
     sla_q = select(func.count()).select_from(Reporte).where(
         *filters, Reporte.estado.in_(ESTADOS_ABIERTOS), age_hours > sla_case
     )

@@ -30,6 +30,8 @@ class TareaRead(BaseModel):
     origen_tipo: str
     reporte_id: str | None = None
     obra_id: str | None = None
+    proyecto_id: str | None = None
+    proyecto_tarea_id: str | None = None
     titulo: str
     descripcion: str | None = None
     prioridad: str
@@ -43,6 +45,9 @@ class TareaRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     fecha_cierre: datetime | None = None
+    cierre_nota: str | None = None
+    carry_over_de: str | None = None
+    intento_n: int = 1
 
     model_config = {"from_attributes": True}
 

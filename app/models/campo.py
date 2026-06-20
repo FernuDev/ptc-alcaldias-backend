@@ -73,12 +73,19 @@ class Tarea(Base):
     integrante_id: Mapped[str | None] = mapped_column(
         String(40), ForeignKey("integrantes.id"), nullable=True
     )
-    origen_tipo: Mapped[str] = mapped_column(String(10))  # reporte | obra | manual
+    origen_tipo: Mapped[str] = mapped_column(String(10))  # reporte | obra | manual | proyecto
     reporte_id: Mapped[str | None] = mapped_column(
         String(20), ForeignKey("reportes.id"), nullable=True
     )
     obra_id: Mapped[str | None] = mapped_column(
         String(20), ForeignKey("obras.id"), nullable=True
+    )
+    # Puente Proyectos↔Cuadrillas (REQ-07): ticket espejo de una tarea de proyecto.
+    proyecto_id: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("proyectos.id"), nullable=True
+    )
+    proyecto_tarea_id: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("proyecto_tareas.id"), nullable=True, index=True
     )
     titulo: Mapped[str] = mapped_column(String(200))
     descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -107,6 +114,15 @@ class Tarea(Base):
         onupdate=lambda: datetime.now(UTC),
     )
     fecha_cierre: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Nota de cierre (evidencia/observación al cerrar; se replica al proyecto).
+    cierre_nota: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Carry-over de jornada (REQ-07): si esta tarea continúa una no cerrada de la
+    # jornada anterior, ``carry_over_de`` apunta a la original e ``intento_n`` cuenta
+    # el número de jornada (1 = primera vez).
+    carry_over_de: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("tareas.id"), nullable=True
+    )
+    intento_n: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class Ubicacion(Base):

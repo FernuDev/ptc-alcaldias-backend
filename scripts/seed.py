@@ -1925,6 +1925,12 @@ async def seed_all():
         print("[12/12] Seeding módulo de campo (monitor en vivo)...")
         await seed_campo(session, all_reportes)
 
+        # ── 13. Fase 6 (carry-over de jornada + documentos versionados) ───────
+        await seed_fase6(session)
+
+        # ── 14. Edad realista de reportes abiertos (indicador SLA creíble) ────
+        await reajustar_reportes_abiertos(session)
+
     await engine.dispose()
     print("\nSeed complete.")
 
@@ -2252,6 +2258,147 @@ async def seed_campo(session, all_reportes: list[dict]) -> None:
         f"         {n_integrantes} integrantes, {n_turnos} turnos, "
         f"{n_tareas} tareas, {n_ubic} ubicaciones"
     )
+
+
+async def seed_fase6(session) -> None:
+    """Siembra carry-over de jornada (REQ-07) y documentos versionados (REQ-04).
+
+    Idempotente e independiente del guard de ``seed_campo``: usa ids fijos con
+    ``ON CONFLICT DO NOTHING`` para poder correr aunque el resto ya esté sembrado.
+    """
+    print("[13/13] Seeding Fase 6 (carry-over + documentos)...")
+
+    cuad_rows = (await session.execute(
+        text("SELECT id, tenant_id FROM cuadrillas ORDER BY tenant_id, id")
+    )).fetchall()
+    jefe_rows = (await session.execute(
+        text("SELECT DISTINCT ON (cuadrilla_id) cuadrilla_id, id FROM integrantes "
+             "ORDER BY cuadrilla_id, id")
+    )).fetchall()
+    jefe_por_cuad = {cid: iid for cid, iid in jefe_rows}
+
+    # ── Carry-over: una cadena arrastrada por tenant ──────────────────────────
+    n_carry = 0
+    cuad_por_tenant: dict[str, str] = {}
+    for cuad_id, tenant_id in cuad_rows:
+        cuad_por_tenant.setdefault(tenant_id, cuad_id)
+    for tenant_id, cuad_id in cuad_por_tenant.items():
+        orig_id = f"seed-carry-{tenant_id}-orig"
+        cont_id = f"seed-carry-{tenant_id}-cont"
+        integrante_id = jefe_por_cuad.get(cuad_id)
+        titulo = "Reparación mayor de socavón (multi-jornada)"
+        await session.execute(text("""
+            INSERT INTO tareas (id, tenant_id, cuadrilla_id, integrante_id, origen_tipo,
+                titulo, prioridad, estado, orden_ruta, instrucciones, checklist, intento_n)
+            VALUES (:id, :tenant_id, :cuadrilla_id, :integrante_id, 'manual',
+                :titulo, 'alta', 'en_ruta', 1, 'Trabajo no concluido en jornada previa.',
+                '[]'::jsonb, 2)
+            ON CONFLICT (id) DO NOTHING
+        """), {
+            "id": orig_id, "tenant_id": tenant_id, "cuadrilla_id": cuad_id,
+            "integrante_id": integrante_id, "titulo": titulo,
+        })
+        await session.execute(text("""
+            INSERT INTO tareas (id, tenant_id, cuadrilla_id, integrante_id, origen_tipo,
+                titulo, prioridad, estado, orden_ruta, instrucciones, checklist,
+                carry_over_de, intento_n)
+            VALUES (:id, :tenant_id, :cuadrilla_id, :integrante_id, 'manual',
+                :titulo, 'alta', 'pendiente', 1, 'Arrastrada de la jornada anterior.',
+                '[]'::jsonb, :carry, 3)
+            ON CONFLICT (id) DO NOTHING
+        """), {
+            "id": cont_id, "tenant_id": tenant_id, "cuadrilla_id": cuad_id,
+            "integrante_id": integrante_id, "titulo": titulo, "carry": orig_id,
+        })
+        n_carry += 1
+
+    # ── Documentos versionados del repositorio ────────────────────────────────
+    admin_rows = (await session.execute(
+        text("SELECT tenant_id, id FROM users WHERE role = 'admin'")
+    )).fetchall()
+    admin_por_tenant = {tid: uid for tid, uid in admin_rows}
+    DOC_SAMPLES = [
+        ("Convenio de colaboración interinstitucional 2026", "convenio"),
+        ("Expediente técnico de obra — repavimentación", "obra"),
+        ("Acta de entrega-recepción de obra", "acta"),
+        ("Reglamento interno de operación de cuadrillas", "norma"),
+        ("Manual de imagen institucional", "norma"),
+    ]
+    _INS_DOC = text("""
+        INSERT INTO archivos (id, tenant_id, nombre, content_type, size_bytes,
+            storage_key, url, categoria, entity_type, entity_id, version,
+            reemplaza_a, es_actual, created_by)
+        VALUES (:id,:tenant_id,:nombre,'application/pdf',:size,:key,:url,
+            'documento',:etype,NULL,:version,:prev,:actual,:creador)
+        ON CONFLICT (id) DO NOTHING
+    """)
+    n_docs = 0
+    for tenant_id in [tid for tid, _ in cuad_por_tenant.items()] or [
+        t["id"] for t in TENANTS
+    ]:
+        creador = admin_por_tenant.get(tenant_id)
+        for j, (nombre, kind) in enumerate(DOC_SAMPLES):
+            size = 80_000 + j * 45_000
+            if j == 0:
+                v1, v2 = f"seed-doc-{tenant_id}-{j}-v1", f"seed-doc-{tenant_id}-{j}-v2"
+                await session.execute(_INS_DOC, {
+                    "id": v1, "tenant_id": tenant_id, "nombre": nombre, "size": size,
+                    "key": f"{tenant_id}/{v1}.pdf", "url": f"/uploads/{tenant_id}/{v1}.pdf",
+                    "etype": kind, "version": 1, "prev": None, "actual": False,
+                    "creador": creador,
+                })
+                await session.execute(_INS_DOC, {
+                    "id": v2, "tenant_id": tenant_id, "nombre": nombre,
+                    "size": size + 12_000,
+                    "key": f"{tenant_id}/{v2}.pdf", "url": f"/uploads/{tenant_id}/{v2}.pdf",
+                    "etype": kind, "version": 2, "prev": v1, "actual": True,
+                    "creador": creador,
+                })
+            else:
+                vid = f"seed-doc-{tenant_id}-{j}"
+                await session.execute(_INS_DOC, {
+                    "id": vid, "tenant_id": tenant_id, "nombre": nombre, "size": size,
+                    "key": f"{tenant_id}/{vid}.pdf", "url": f"/uploads/{tenant_id}/{vid}.pdf",
+                    "etype": kind, "version": 1, "prev": None, "actual": True,
+                    "creador": creador,
+                })
+            n_docs += 1
+
+    await session.commit()
+    print(f"         {n_carry} cadenas carry-over, {n_docs} documentos")
+
+
+async def reajustar_reportes_abiertos(session) -> None:
+    """Reacomoda la EDAD de los reportes abiertos a una distribución realista
+    (sesgada a reciente, ventana ~16 días), anclada al 'hoy' del dataset.
+
+    Sin esto, los reportes abiertos del seed quedan demasiado viejos respecto a la
+    línea de tiempo congelada y el indicador 'En riesgo de SLA' marca a casi todos
+    los activos. Con el reacomodo, sólo un subconjunto creíble (~25%) rebasa su
+    SLA. Determinista por id (md5) → idempotente; ancla a max(fecha) de los
+    reportes ya cerrados, que no se tocan, para ser estable entre corridas.
+    """
+    res = await session.execute(text("""
+        WITH hoy AS (
+            SELECT tenant_id, max(fecha_creacion) AS t
+            FROM reportes WHERE estado IN ('resuelto','cerrado') GROUP BY tenant_id
+        ),
+        calc AS (
+            SELECT r.id, r.estado, h.t AS hoy,
+                h.t - (power(
+                    (('x'||substr(md5(r.id),1,8))::bit(32)::bigint::numeric
+                     / 4294967295.0), 2.0) * 16) * interval '1 day' AS nueva
+            FROM reportes r JOIN hoy h ON h.tenant_id = r.tenant_id
+            WHERE r.estado IN ('nuevo','asignado','en_proceso')
+        )
+        UPDATE reportes r SET
+            fecha_creacion = c.nueva,
+            fecha_actualizacion = CASE WHEN c.estado = 'nuevo' THEN c.nueva
+                ELSE c.nueva + (c.hoy - c.nueva) * 0.6 END
+        FROM calc c WHERE c.id = r.id
+    """))
+    await session.commit()
+    print(f"         {res.rowcount} reportes abiertos reacomodados (edad realista)")
 
 
 def main():

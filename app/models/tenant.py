@@ -35,6 +35,15 @@ class Tenant(TimestampMixin, Base):
     flujos: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Checklists de cuadrillas por categoría: {"bacheo":["paso1",...], ...}
     checklists: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Parámetros del expediente de zona (clustering espacio-temporal, REQ-09):
+    # {"umbral": 8, "ventana_dias": 365, "radio_m": 300}
+    zona_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Esquema de almacenamiento documental (REQ-04): nube_gestionada (default) |
+    # conector_nas (NAS del cliente) | subarrendamiento_dedicado.
+    storage_scheme: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Config del conector NAS: {tipo, host, endpoint, estado, credencial_configurada}.
+    # NUNCA persiste credenciales en claro (sólo una marca de que existe el secreto).
+    storage_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     users = relationship("User", back_populates="tenant", lazy="selectin")
     colonias = relationship("Colonia", back_populates="tenant", lazy="selectin")

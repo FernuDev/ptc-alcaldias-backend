@@ -10,17 +10,38 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     DECIMAL,
+    Column,
     DateTime,
     ForeignKey,
     Integer,
     SmallInteger,
     String,
+    Table,
     Text,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+# Vínculo proyecto ↔ reportes: cuando un expediente de zona se convierte en
+# proyecto, los reportes del cluster quedan ligados aquí (trazabilidad REQ-09).
+proyecto_reporte_relaciones = Table(
+    "proyecto_reporte_relaciones",
+    Base.metadata,
+    Column(
+        "proyecto_id",
+        String(40),
+        ForeignKey("proyectos.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "reporte_id",
+        String(20),
+        ForeignKey("reportes.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 
 class Proyecto(Base):
@@ -81,6 +102,16 @@ class Proyecto(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    # Reportes ciudadanos del cluster que originó el proyecto (expediente de zona).
+    reportes_vinculados = relationship(
+        "Reporte",
+        secondary=proyecto_reporte_relaciones,
+        lazy="selectin",
+    )
+
+    @property
+    def num_reportes_vinculados(self) -> int:
+        return len(self.reportes_vinculados)
 
 
 class ProyectoTarea(Base):
