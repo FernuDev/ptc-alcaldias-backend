@@ -25,6 +25,18 @@ class Tenant(TimestampMixin, Base):
     poblacion: Mapped[int] = mapped_column(Integer, default=0)
     area_km2: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), default=0)
 
+    # ── Marca / White-label (módulo Marca) ───────────────────────────────────
+    # Documento de design tokens (BrandTokens) con los *overrides* explícitos del
+    # tenant. NULL ⇒ usa defaults MC + escalares (primario/secundario/dorado).
+    # ``primario``/``secundario``/``dorado``/``escudo_path`` se mantienen
+    # sincronizados como denormalización para consumidores legacy (PDF, público).
+    brand: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Logo horizontal subido (clave de storage); para header/login/documentos.
+    logo_path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    favicon_path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Versión de marca: incrementa en cada guardado; alimenta el historial.
+    brand_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
     # ── Configuración operativa (módulo 13, persistente por tenant) ──────────
     titular_nombre: Mapped[str | None] = mapped_column(String(160), nullable=True)
     titular_cargo: Mapped[str | None] = mapped_column(String(160), nullable=True)

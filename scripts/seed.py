@@ -708,6 +708,219 @@ def generate_reportes_for_tenant(tenant_id: str, seed: int, total: int) -> list[
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Zona hotspots  (clusters deterministas para el Expediente de zona, Plan.IA)
+# ═══════════════════════════════════════════════════════════════════════════
+# El Expediente de zona detecta zonas problemáticas agrupando reportes recurrentes
+# de la MISMA categoría por proximidad (PostGIS ST_ClusterDBSCAN, eps=radio) o por
+# colonia (fallback sin PostGIS). Los reportes aleatorios rara vez forman varios
+# clusters densos, así que aquí sembramos "focos" deterministas: concentraciones
+# apretadas (≈110 m de radio) que superan el umbral por defecto (8) dentro de la
+# ventana temporal. Así la demo siempre muestra varias zonas con diagnóstico,
+# recomendación y severidad variada (media/alta según el número de reportes).
+#
+# Cada foco usa una (categoría, colonia) distinta para aparecer como un cluster
+# separado tanto en PostGIS como en el fallback por colonia.
+
+ZONA_HOTSPOTS_MC: list[dict] = [
+    {"categoria": "bacheo",    "colonia_id": "heroes-de-padierna",   "count": 14},
+    {"categoria": "drenaje",   "colonia_id": "lomas-de-san-bernabe", "count": 12},
+    {"categoria": "alumbrado", "colonia_id": "cerro-del-judio",      "count": 11},
+    {"categoria": "agua",      "colonia_id": "tierra-unida",         "count": 9},
+    {"categoria": "arboles",   "colonia_id": "la-carbonera",         "count": 9},
+    {"categoria": "limpia",    "colonia_id": "san-bernabe-ocotepec", "count": 8},
+]
+
+ZONA_HOTSPOTS_TL: list[dict] = [
+    {"categoria": "bacheo",    "colonia_id": "tl-lomas-padierna",      "count": 13},
+    {"categoria": "drenaje",   "colonia_id": "tl-san-miguel-topilejo", "count": 11},
+    {"categoria": "alumbrado", "colonia_id": "tl-heroes-padierna-tl",  "count": 10},
+    {"categoria": "agua",      "colonia_id": "tl-pedregal-san-nicolas","count": 9},
+    {"categoria": "limpia",    "colonia_id": "tl-centro",              "count": 8},
+]
+
+
+def _cluster_coord(
+    center_lng: float, center_lat: float, rand, radius_deg: float = 0.0010
+) -> tuple[float, float]:
+    """Punto aleatorio dentro de ~110 m del centro de la colonia. Tan apretado que
+    ST_ClusterDBSCAN con eps=300 m agrupa todos los reportes del foco como un solo
+    cluster (y el fallback por colonia también los agrupa)."""
+    theta = rand() * math.pi * 2
+    r = math.sqrt(rand()) * radius_deg
+    return (center_lng + math.cos(theta) * r, center_lat + math.sin(theta) * r * 0.78)
+
+
+def _hotspot_timestamp(rand, span_days: int = 280) -> int:
+    """Fecha de creación repartida a lo largo del último año (sesgada, sin salir de
+    la ventana) para que el cluster luzca como un problema recurrente y no como
+    incidentes aislados."""
+    day_offset = rand() ** 1.25 * span_days
+    hour_offset = rand() * 24
+    minute_offset = rand() * 60
+    return NOW_MS - round((day_offset * 24 + hour_offset) * 3_600_000 + minute_offset * 60_000)
+
+
+def generate_zona_hotspots_for_tenant(tenant_id: str, seed: int) -> list[dict]:
+    """Genera reportes en focos densos (clusters) para el Expediente de zona.
+    Mismo esquema de dict que ``generate_reportes_for_tenant`` para reutilizar la
+    inserción. Ids ``{prefix}-RC-Z###`` para no colisionar con los aleatorios."""
+    rand = mulberry32(seed)
+    colonias = COLONIAS_MC if tenant_id == "magdalena-contreras" else COLONIAS_TL
+    by_id = {c["id"]: c for c in colonias}
+    prefix = "TL" if tenant_id == "tlalpan" else "MC"
+    specs = ZONA_HOTSPOTS_MC if tenant_id == "magdalena-contreras" else ZONA_HOTSPOTS_TL
+
+    reportes: list[dict] = []
+    seq = 0
+    for spec in specs:
+        categoria = spec["categoria"]
+        colonia = by_id[spec["colonia_id"]]
+        titulos = TITULOS[categoria]
+        descripciones = DESCRIPCIONES[categoria]
+
+        for _ in range(spec["count"]):
+            seq += 1
+            id_num = f"Z{seq:03d}"
+            reporte_id = f"{prefix}-RC-{id_num}"
+
+            creacion_ms = _hotspot_timestamp(rand)
+            age_hours = (NOW_MS - creacion_ms) / 3_600_000
+            estado = _pick_estado(age_hours, rand)
+            cuadrilla_id = None if estado == "nuevo" else _pick_cuadrilla(categoria, rand, prefix)
+
+            prioridad_cfg = _weighted_pick(PRIORIDADES, rand)
+            peso = prioridad_cfg["pesoMin"] + math.floor(
+                rand() * (prioridad_cfg["pesoMax"] - prioridad_cfg["pesoMin"] + 1)
+            )
+
+            fecha_cierre = None
+            tiempo_atencion_horas = None
+            actualizacion_ms = creacion_ms
+            if estado in ("resuelto", "cerrado"):
+                if prioridad_cfg["id"] == "critica":
+                    horas_atencion = 2 + rand() * 22
+                elif prioridad_cfg["id"] == "alta":
+                    horas_atencion = 6 + rand() * 60
+                elif prioridad_cfg["id"] == "media":
+                    horas_atencion = 24 + rand() * 120
+                else:
+                    horas_atencion = 48 + rand() * 240
+                cierre_ms = min(NOW_MS - rand() * 3_600_000 * 12, creacion_ms + horas_atencion * 3_600_000)
+                fecha_cierre = _ms_to_dt(cierre_ms)
+                tiempo_atencion_horas = round((cierre_ms - creacion_ms) / 360_000) / 10
+                actualizacion_ms = cierre_ms
+            elif estado in ("en_proceso", "asignado"):
+                actualizacion_ms = creacion_ms + rand() * (NOW_MS - creacion_ms)
+
+            ciudadano = _pick_name(rand)
+            cierre_ms_val = int(fecha_cierre.timestamp() * 1000) if fecha_cierre else None
+            evidencias = _generate_evidencias(reporte_id, estado, creacion_ms, cierre_ms_val, rand)
+            timeline = _generate_timeline(
+                reporte_id, estado, creacion_ms, actualizacion_ms, cierre_ms_val, ciudadano, cuadrilla_id, rand
+            )
+
+            costo_estimado = None
+            if categoria not in ("seguridad", "comercio_vp"):
+                costo_estimado = _estimar_costo(categoria, peso, rand)
+            gasto_real = None
+            if estado == "resuelto" and costo_estimado is not None:
+                gasto_real = round(costo_estimado * (0.82 + rand() * 0.32))
+
+            lng, lat = _cluster_coord(colonia["center_lng"], colonia["center_lat"], rand)
+
+            reportes.append({
+                "id": reporte_id,
+                "tenant_id": tenant_id,
+                "folio": f"{prefix}-2026-{id_num}",
+                "categoria_id": categoria,
+                "estado": estado,
+                "prioridad": prioridad_cfg["id"],
+                "fuente": _weighted_pick(FUENTES, rand)["id"],
+                "cuadrilla_id": cuadrilla_id,
+                "colonia_id": colonia["id"],
+                "colonia_nombre": colonia["nombre"],
+                "lng": lng,
+                "lat": lat,
+                "peso": peso,
+                "titulo": titulos[math.floor(rand() * len(titulos))],
+                "descripcion": descripciones[math.floor(rand() * len(descripciones))],
+                "fecha_creacion": _ms_to_dt(creacion_ms),
+                "fecha_actualizacion": _ms_to_dt(actualizacion_ms),
+                "fecha_cierre": fecha_cierre,
+                "tiempo_atencion_horas": tiempo_atencion_horas,
+                "costo_estimado": costo_estimado,
+                "gasto_real": gasto_real,
+                "ciudadano_nombre": ciudadano["nombre"],
+                "ciudadano_iniciales": ciudadano["iniciales"],
+                "evidencias": evidencias,
+                "timeline": timeline,
+                "obras_relacionadas_ids": [],
+            })
+
+    return reportes
+
+
+async def insert_reportes(session, reportes: list[dict]) -> None:
+    """Inserta reportes + evidencias + timeline (idempotente, ON CONFLICT DO
+    NOTHING). Fuente única usada por el seed completo y por
+    ``scripts/seed_zona_hotspots.py``."""
+    for r in reportes:
+        await session.execute(text("""
+            INSERT INTO reportes (id, tenant_id, folio, categoria_id, estado, prioridad, fuente,
+                cuadrilla_id, colonia_id, colonia_nombre, lng, lat, peso,
+                titulo, descripcion, ciudadano_nombre, ciudadano_iniciales,
+                fecha_creacion, fecha_actualizacion, fecha_cierre,
+                tiempo_atencion_horas, costo_estimado, gasto_real)
+            VALUES (:id, :tenant_id, :folio, :categoria_id, :estado, :prioridad, :fuente,
+                :cuadrilla_id, :colonia_id, :colonia_nombre, :lng, :lat, :peso,
+                :titulo, :descripcion, :ciudadano_nombre, :ciudadano_iniciales,
+                :fecha_creacion, :fecha_actualizacion, :fecha_cierre,
+                :tiempo_atencion_horas, :costo_estimado, :gasto_real)
+            ON CONFLICT (id) DO NOTHING
+        """), {
+            "id": r["id"],
+            "tenant_id": r["tenant_id"],
+            "folio": r["folio"],
+            "categoria_id": r["categoria_id"],
+            "estado": r["estado"],
+            "prioridad": r["prioridad"],
+            "fuente": r["fuente"],
+            "cuadrilla_id": r["cuadrilla_id"],
+            "colonia_id": r["colonia_id"],
+            "colonia_nombre": r["colonia_nombre"],
+            "lng": r["lng"],
+            "lat": r["lat"],
+            "peso": r["peso"],
+            "titulo": r["titulo"],
+            "descripcion": r["descripcion"],
+            "ciudadano_nombre": r["ciudadano_nombre"],
+            "ciudadano_iniciales": r["ciudadano_iniciales"],
+            "fecha_creacion": r["fecha_creacion"],
+            "fecha_actualizacion": r["fecha_actualizacion"],
+            "fecha_cierre": r["fecha_cierre"],
+            "tiempo_atencion_horas": r["tiempo_atencion_horas"],
+            "costo_estimado": r["costo_estimado"],
+            "gasto_real": r["gasto_real"],
+        })
+
+        # Evidencias
+        for ev in r["evidencias"]:
+            await session.execute(text("""
+                INSERT INTO reporte_evidencias (id, reporte_id, url, caption, fecha, autor, tipo)
+                VALUES (:id, :reporte_id, :url, :caption, :fecha, :autor, :tipo)
+                ON CONFLICT (id) DO NOTHING
+            """), {"reporte_id": r["id"], **ev})
+
+        # Timeline events
+        for te in r["timeline"]:
+            await session.execute(text("""
+                INSERT INTO reporte_eventos (id, reporte_id, fecha, tipo, titulo, descripcion, autor_nombre, autor_iniciales, autor_rol)
+                VALUES (:id, :reporte_id, :fecha, :tipo, :titulo, :descripcion, :autor_nombre, :autor_iniciales, :autor_rol)
+                ON CONFLICT (id) DO NOTHING
+            """), {"reporte_id": r["id"], **te})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Obras generator  (exact port of obras.ts)
 # ═══════════════════════════════════════════════════════════════════════════
 

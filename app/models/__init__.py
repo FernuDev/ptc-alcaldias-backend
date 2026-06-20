@@ -6,6 +6,7 @@ from app.models.agente_interaccion import AgenteInteraccion
 from app.models.archivo import Archivo
 from app.models.audit_log import AuditLog
 from app.models.base import Base
+from app.models.brand_history import TenantBrandHistory
 from app.models.campo import Mensaje, Tarea, Turno, Ubicacion
 from app.models.categoria import Categoria, ObraCategoria
 from app.models.colonia import Colonia
@@ -13,7 +14,6 @@ from app.models.compromiso import Compromiso
 from app.models.contratista import Contratista
 from app.models.cuadrilla import Cuadrilla, Integrante, cuadrilla_especialidades
 from app.models.notificacion import Notificacion
-from app.models.org_nodo import Capacidad, OrgNodo, nodo_capacidades
 from app.models.obra import (
     Obra,
     ObraCalleAfectada,
@@ -23,6 +23,7 @@ from app.models.obra import (
     ObraPresupuestoItem,
     ObraTimeline,
 )
+from app.models.org_nodo import Capacidad, OrgNodo, nodo_capacidades
 from app.models.proyecto import (
     Proyecto,
     ProyectoAprobacion,
@@ -40,6 +41,7 @@ from app.models.user import User, user_areas
 __all__ = [
     "Base",
     "Tenant",
+    "TenantBrandHistory",
     "User",
     "user_areas",
     "Categoria",
