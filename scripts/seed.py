@@ -1928,6 +1928,9 @@ async def seed_all():
         # ── 13. Fase 6 (carry-over de jornada + documentos versionados) ───────
         await seed_fase6(session)
 
+        # ── 14. Edad realista de reportes abiertos (indicador SLA creíble) ────
+        await reajustar_reportes_abiertos(session)
+
     await engine.dispose()
     print("\nSeed complete.")
 
@@ -2363,6 +2366,39 @@ async def seed_fase6(session) -> None:
 
     await session.commit()
     print(f"         {n_carry} cadenas carry-over, {n_docs} documentos")
+
+
+async def reajustar_reportes_abiertos(session) -> None:
+    """Reacomoda la EDAD de los reportes abiertos a una distribución realista
+    (sesgada a reciente, ventana ~16 días), anclada al 'hoy' del dataset.
+
+    Sin esto, los reportes abiertos del seed quedan demasiado viejos respecto a la
+    línea de tiempo congelada y el indicador 'En riesgo de SLA' marca a casi todos
+    los activos. Con el reacomodo, sólo un subconjunto creíble (~25%) rebasa su
+    SLA. Determinista por id (md5) → idempotente; ancla a max(fecha) de los
+    reportes ya cerrados, que no se tocan, para ser estable entre corridas.
+    """
+    res = await session.execute(text("""
+        WITH hoy AS (
+            SELECT tenant_id, max(fecha_creacion) AS t
+            FROM reportes WHERE estado IN ('resuelto','cerrado') GROUP BY tenant_id
+        ),
+        calc AS (
+            SELECT r.id, r.estado, h.t AS hoy,
+                h.t - (power(
+                    (('x'||substr(md5(r.id),1,8))::bit(32)::bigint::numeric
+                     / 4294967295.0), 2.0) * 16) * interval '1 day' AS nueva
+            FROM reportes r JOIN hoy h ON h.tenant_id = r.tenant_id
+            WHERE r.estado IN ('nuevo','asignado','en_proceso')
+        )
+        UPDATE reportes r SET
+            fecha_creacion = c.nueva,
+            fecha_actualizacion = CASE WHEN c.estado = 'nuevo' THEN c.nueva
+                ELSE c.nueva + (c.hoy - c.nueva) * 0.6 END
+        FROM calc c WHERE c.id = r.id
+    """))
+    await session.commit()
+    print(f"         {res.rowcount} reportes abiertos reacomodados (edad realista)")
 
 
 def main():
