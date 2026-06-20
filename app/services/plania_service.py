@@ -119,6 +119,50 @@ _CLUSTER_SQL = text(
     """
 )
 
+# Fallback sin PostGIS (Postgres plano, p. ej. producción): agrupa por
+# (categoría, colonia). Devuelve las MISMAS columnas que ``_CLUSTER_SQL`` para
+# reutilizar el mismo procesamiento. Ignora ``:radio`` (no hay proximidad real).
+_CLUSTER_SQL_FALLBACK = text(
+    """
+    SELECT
+        categoria_id,
+        mode() WITHIN GROUP (ORDER BY colonia_id) AS colonia_id,
+        mode() WITHIN GROUP (ORDER BY colonia_nombre) AS colonia_nombre,
+        count(*) AS total,
+        avg(lat) AS lat,
+        avg(lng) AS lng,
+        array_agg(id ORDER BY id) AS reporte_ids,
+        array_agg(lng ORDER BY id) AS lngs,
+        array_agg(lat ORDER BY id) AS lats
+    FROM reportes
+    WHERE tenant_id = :tenant
+      AND fecha_creacion >= :desde
+    GROUP BY categoria_id, colonia_id
+    HAVING count(*) >= :umbral
+    ORDER BY total DESC
+    """
+)
+
+# Detección perezosa (cacheada) de si existe la columna ``geom`` (= PostGIS
+# habilitado por la migración). Si no, se usa el fallback no-espacial.
+_geom_disponible_cache: bool | None = None
+
+
+async def _geom_disponible(db: AsyncSession) -> bool:
+    global _geom_disponible_cache
+    if _geom_disponible_cache is None:
+        _geom_disponible_cache = bool(
+            (
+                await db.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name = 'reportes' AND column_name = 'geom'"
+                    )
+                )
+            ).scalar()
+        )
+    return _geom_disponible_cache
+
 
 # ── Portafolio / Proyectos ──────────────────────────────────────────────────
 
@@ -312,9 +356,11 @@ async def expediente_zona(
     """
     umbral, dias, radio = await _resolver_zona_params(user, db, umbral, dias, radio)
     desde = datetime.now(UTC) - timedelta(days=dias)
+    # PostGIS si está disponible (DBSCAN espacial); si no, fallback por colonia.
+    sql = _CLUSTER_SQL if await _geom_disponible(db) else _CLUSTER_SQL_FALLBACK
     rows = (
         await db.execute(
-            _CLUSTER_SQL,
+            sql,
             {"tenant": user.tenant_id, "desde": desde, "umbral": umbral, "radio": radio},
         )
     ).all()
@@ -371,10 +417,10 @@ async def expediente_zona(
                 "lat": float(r.lat) if r.lat is not None else None,
                 "lng": float(r.lng) if r.lng is not None else None,
                 "diagnostico": (
-                    f"Se detectó un cluster de {total} reportes de "
-                    f"«{label or cat_id}» en torno a {col_nombre or col_id} "
-                    f"(radio {radio} m) en los últimos {dias} días, lo que "
-                    f"sugiere un problema estructural y no incidentes aislados."
+                    f"Se detectó una concentración de {total} reportes de "
+                    f"«{label or cat_id}» en {col_nombre or col_id} en los "
+                    f"últimos {dias} días, lo que sugiere un problema "
+                    f"estructural y no incidentes aislados."
                 ),
                 "recomendacion": reco,
                 "costo_estimado": costo,

@@ -24,15 +24,31 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ── PostGIS + geometría generada de reportes ────────────────────────────
-    op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-    op.execute(
-        "ALTER TABLE reportes ADD COLUMN IF NOT EXISTS geom geometry(Point, 4326) "
-        "GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(lng, lat), 4326)) STORED"
+    # ── PostGIS + geometría generada de reportes (OPCIONAL) ─────────────────
+    # PostGIS sólo se habilita si la extensión está disponible en el servidor.
+    # En un Postgres plano (p. ej. la instancia de producción) se omite la
+    # geometría y el expediente de zona degrada a clustering no-espacial; el
+    # servicio detecta en runtime si existe la columna ``geom``.
+    conn = op.get_bind()
+    postgis_disponible = bool(
+        conn.execute(
+            sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'postgis'")
+        ).scalar()
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_reportes_geom ON reportes USING GIST (geom)"
-    )
+    if postgis_disponible:
+        op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+        op.execute(
+            "ALTER TABLE reportes ADD COLUMN IF NOT EXISTS geom geometry(Point, 4326) "
+            "GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(lng, lat), 4326)) STORED"
+        )
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS ix_reportes_geom ON reportes USING GIST (geom)"
+        )
+    else:
+        print(
+            "[f1ge0z0na001] PostGIS no disponible en este servidor; se omite la "
+            "columna geom. El expediente de zona usará clustering no-espacial."
+        )
 
     # ── Puente proyecto ↔ reportes (cluster del expediente de zona) ──────────
     op.create_table(
