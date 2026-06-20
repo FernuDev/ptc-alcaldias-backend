@@ -2054,65 +2054,21 @@ async def seed_all():
         print("[10/11] Generating and seeding reportes...")
         reportes_mc = generate_reportes_for_tenant("magdalena-contreras", REPORTES_SEED, REPORTES_TOTAL_MC)
         reportes_tl = generate_reportes_for_tenant("tlalpan", REPORTES_SEED + 31, REPORTES_TOTAL_TL)
+        # Focos densos para el Expediente de zona (Plan.IA): clusters deterministas
+        # que superan el umbral por defecto, para que la demo muestre varias zonas.
+        hotspots_mc = generate_zona_hotspots_for_tenant("magdalena-contreras", REPORTES_SEED + 101)
+        hotspots_tl = generate_zona_hotspots_for_tenant("tlalpan", REPORTES_SEED + 131)
+        reportes_mc += hotspots_mc
+        reportes_tl += hotspots_tl
         all_reportes = reportes_mc + reportes_tl
 
-        for r in all_reportes:
-            await session.execute(text("""
-                INSERT INTO reportes (id, tenant_id, folio, categoria_id, estado, prioridad, fuente,
-                    cuadrilla_id, colonia_id, colonia_nombre, lng, lat, peso,
-                    titulo, descripcion, ciudadano_nombre, ciudadano_iniciales,
-                    fecha_creacion, fecha_actualizacion, fecha_cierre,
-                    tiempo_atencion_horas, costo_estimado, gasto_real)
-                VALUES (:id, :tenant_id, :folio, :categoria_id, :estado, :prioridad, :fuente,
-                    :cuadrilla_id, :colonia_id, :colonia_nombre, :lng, :lat, :peso,
-                    :titulo, :descripcion, :ciudadano_nombre, :ciudadano_iniciales,
-                    :fecha_creacion, :fecha_actualizacion, :fecha_cierre,
-                    :tiempo_atencion_horas, :costo_estimado, :gasto_real)
-                ON CONFLICT (id) DO NOTHING
-            """), {
-                "id": r["id"],
-                "tenant_id": r["tenant_id"],
-                "folio": r["folio"],
-                "categoria_id": r["categoria_id"],
-                "estado": r["estado"],
-                "prioridad": r["prioridad"],
-                "fuente": r["fuente"],
-                "cuadrilla_id": r["cuadrilla_id"],
-                "colonia_id": r["colonia_id"],
-                "colonia_nombre": r["colonia_nombre"],
-                "lng": r["lng"],
-                "lat": r["lat"],
-                "peso": r["peso"],
-                "titulo": r["titulo"],
-                "descripcion": r["descripcion"],
-                "ciudadano_nombre": r["ciudadano_nombre"],
-                "ciudadano_iniciales": r["ciudadano_iniciales"],
-                "fecha_creacion": r["fecha_creacion"],
-                "fecha_actualizacion": r["fecha_actualizacion"],
-                "fecha_cierre": r["fecha_cierre"],
-                "tiempo_atencion_horas": r["tiempo_atencion_horas"],
-                "costo_estimado": r["costo_estimado"],
-                "gasto_real": r["gasto_real"],
-            })
-
-            # Evidencias
-            for ev in r["evidencias"]:
-                await session.execute(text("""
-                    INSERT INTO reporte_evidencias (id, reporte_id, url, caption, fecha, autor, tipo)
-                    VALUES (:id, :reporte_id, :url, :caption, :fecha, :autor, :tipo)
-                    ON CONFLICT (id) DO NOTHING
-                """), {"reporte_id": r["id"], **ev})
-
-            # Timeline events
-            for te in r["timeline"]:
-                await session.execute(text("""
-                    INSERT INTO reporte_eventos (id, reporte_id, fecha, tipo, titulo, descripcion, autor_nombre, autor_iniciales, autor_rol)
-                    VALUES (:id, :reporte_id, :fecha, :tipo, :titulo, :descripcion, :autor_nombre, :autor_iniciales, :autor_rol)
-                    ON CONFLICT (id) DO NOTHING
-                """), {"reporte_id": r["id"], **te})
+        await insert_reportes(session, all_reportes)
 
         await session.commit()
-        print(f"         {len(all_reportes)} reportes ({len(reportes_mc)} MC + {len(reportes_tl)} TL)")
+        print(
+            f"         {len(all_reportes)} reportes ({len(reportes_mc)} MC + {len(reportes_tl)} TL) "
+            f"· incluye {len(hotspots_mc) + len(hotspots_tl)} en focos de zona"
+        )
 
         # ── Reporte-Obra links ────────────────────────────────────────────
         print("         Linking reportes to obras...")
