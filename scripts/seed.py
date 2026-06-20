@@ -54,17 +54,18 @@ DATABASE_URL: str = os.environ.get(
 # ---------------------------------------------------------------------------
 # Credenciales demo
 # ---------------------------------------------------------------------------
-# Todos los usuarios seed comparten una password demo única (robusta pero
-# pública para la demo), no el patrón débil y enumerable "{id}.2026".
-# Se puede sobreescribir con la variable de entorno SEED_DEMO_PASSWORD.
+# Contraseñas demo. Por defecto cada usuario usa el patrón «<id>.2026», que es lo
+# que documenta CREDENCIALES.md (cómodo para la demo local). Si se define la
+# variable de entorno SEED_DEMO_PASSWORD se usa ESA contraseña compartida para
+# todos (más robusta y no enumerable — recomendada para entornos públicos).
 #
 #   CREDENCIALES DEMO  ──────────────────────────────────────────────
 #   email:    cualquier email de la tabla USERS (p.ej.
-#             fernando.mercado@mcontreras.gob.mx  /  admin Magdalena Contreras
-#             gabriela.osorio@tlalpan.cdmx.gob.mx /  admin Tlalpan)
-#   password: TuAlcaldIA-Demo-2026!   (o el valor de SEED_DEMO_PASSWORD)
+#             fernando.mercado@mcontreras.gob.mx  /  admin Magdalena Contreras → mc-admin.2026
+#             gabriela.osorio@tlalpan.cdmx.gob.mx /  admin Tlalpan            → tl-admin.2026)
+#   password: «<id>.2026»  (o el valor de SEED_DEMO_PASSWORD si está definido)
 #   ──────────────────────────────────────────────────────────────────
-DEMO_PASSWORD: str = os.environ.get("SEED_DEMO_PASSWORD", "TuAlcaldIA-Demo-2026!")
+DEMO_PASSWORD_OVERRIDE: str | None = os.environ.get("SEED_DEMO_PASSWORD")
 
 # Costo de bcrypt unificado con app/core/security.py (BCRYPT_ROUNDS = 12).
 BCRYPT_ROUNDS = 12
@@ -1541,15 +1542,19 @@ async def seed_all():
         print("[7/11] Seeding users...")
         user_area_rows = []
         for u in USERS:
-            # Password demo compartida (ver DEMO_PASSWORD arriba). Salt único por
-            # usuario; rounds=12 unificado con app/core/security.py.
+            # Por defecto "<id>.2026" (coincide con CREDENCIALES.md); si hay
+            # SEED_DEMO_PASSWORD se usa esa contraseña compartida para todos.
+            # Salt único; rounds=12 unificado con app/core/security.py. El
+            # ON CONFLICT actualiza el hash para que un re-seed re-alinee las
+            # credenciales documentadas (evita que queden desfasadas).
+            password_plain = DEMO_PASSWORD_OVERRIDE or f"{u['id']}.2026"
             password_hash = _bcrypt.hashpw(
-                DEMO_PASSWORD.encode(), _bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+                password_plain.encode(), _bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
             ).decode()
             await session.execute(text("""
                 INSERT INTO users (id, tenant_id, email, nombre, iniciales, cargo, role, avatar_tone, password_hash, is_active)
                 VALUES (:id, :tenant_id, :email, :nombre, :iniciales, :cargo, :role, :avatar_tone, :password_hash, true)
-                ON CONFLICT (id) DO NOTHING
+                ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash
             """), {
                 "id": u["id"],
                 "tenant_id": u["tenant_id"],
@@ -1573,7 +1578,11 @@ async def seed_all():
             """), row)
         await session.commit()
         print(f"         {len(USERS)} users, {len(user_area_rows)} user_areas")
-        print(f"         demo password (todos los usuarios): {DEMO_PASSWORD!r}")
+        print(
+            "         contraseña: "
+            + ("SEED_DEMO_PASSWORD (compartida)" if DEMO_PASSWORD_OVERRIDE
+               else "«<id>.2026» por usuario (ver CREDENCIALES.md)")
+        )
 
         # ── 8. Cuadrillas ────────────────────────────────────────────────
         print("[8/11] Seeding cuadrillas...")
