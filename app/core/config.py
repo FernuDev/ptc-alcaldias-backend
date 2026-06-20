@@ -20,6 +20,13 @@ class Settings(BaseSettings):
 
     LOGIN_RATE_LIMIT: str = "5/15minutes"
 
+    # ── R5 · Feature flags ────────────────────────────────────────────────
+    # Núcleo organizacional (árbol + RBAC heredado). Kill-switch global para
+    # introducir el módulo sin tumbar lo vivo. La propagación del RBAC heredado
+    # a los módulos existentes (Fase 4) se controla aparte.
+    FEATURE_ORGTREE: bool = True
+    FEATURE_ORGTREE_RBAC: bool = False
+
     # ── Agente Institucional · Motor LLM ──────────────────────────────────
     # Proveedor activo: "deepseek" (por defecto) | "anthropic" | "fake" (tests)
     LLM_PROVIDER: str = "deepseek"

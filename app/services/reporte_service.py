@@ -53,6 +53,24 @@ def _apply_tenant_and_area_filter(
     return stmt
 
 
+async def _apply_scope(stmt: Select, user: User, db: AsyncSession) -> Select:
+    """Alcance de reportes. Con el RBAC heredado encendido (Fase 4) y un usuario
+    con nodo, restringe por las categorías alcanzables desde su sub-árbol; en
+    cualquier otro caso conserva el filtro por áreas existente (no rompe lo vivo).
+    """
+    from app.core.scoping import (
+        is_global_scope,
+        rbac_heredado_activo,
+        user_scope_categoria_ids,
+    )
+
+    if rbac_heredado_activo() and not is_global_scope(user) and user.nodo_id:
+        stmt = stmt.where(Reporte.tenant_id == user.tenant_id)
+        cats = await user_scope_categoria_ids(db, user)
+        return stmt.where(Reporte.categoria_id.in_(cats or []))
+    return _apply_tenant_and_area_filter(stmt, user)
+
+
 async def list_reportes(
     user: User,
     db: AsyncSession,
@@ -69,7 +87,7 @@ async def list_reportes(
     colonia_ids: list[str] | None = None,
 ) -> PaginatedResponse[ReporteRead]:
     stmt = select(Reporte)
-    stmt = _apply_tenant_and_area_filter(stmt, user)
+    stmt = await _apply_scope(stmt, user, db)
 
     if search:
         pattern = f"%{search}%"
@@ -142,7 +160,7 @@ async def list_reportes(
 
 async def get_reporte(reporte_id: str, user: User, db: AsyncSession) -> ReporteRead:
     stmt = select(Reporte).where(Reporte.id == reporte_id)
-    stmt = _apply_tenant_and_area_filter(stmt, user)
+    stmt = await _apply_scope(stmt, user, db)
     result = await db.execute(stmt)
     r = result.scalar_one_or_none()
     if r is None:

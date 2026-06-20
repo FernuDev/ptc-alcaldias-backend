@@ -46,7 +46,11 @@ async def authenticate(
         raise UnauthorizedError("Cuenta desactivada")
 
     area_ids = [a.id for a in user.areas]
-    access_token = create_access_token(user.id, user.tenant_id, user.role, area_ids)
+    nodo = getattr(user, "nodo", None)
+    es_campo = bool(getattr(user, "es_campo", False))
+    access_token = create_access_token(
+        user.id, user.tenant_id, user.role, area_ids, user.nodo_id, es_campo
+    )
     raw_refresh, refresh_hash = create_refresh_token()
 
     family_id = uuid.uuid4()
@@ -77,6 +81,9 @@ async def authenticate(
         role=user.role,
         areas=area_ids,
         avatar_tone=user.avatar_tone,
+        nodo_id=user.nodo_id,
+        rol_nivel=nodo.nivel if nodo else None,
+        es_campo=es_campo,
     )
 
     return access_token, raw_refresh, user_brief
@@ -151,7 +158,14 @@ async def refresh_tokens(
     rt.revoked_at = datetime.now(UTC)
 
     area_ids = [a.id for a in user.areas]
-    access_token = create_access_token(user.id, user.tenant_id, user.role, area_ids)
+    access_token = create_access_token(
+        user.id,
+        user.tenant_id,
+        user.role,
+        area_ids,
+        user.nodo_id,
+        bool(getattr(user, "es_campo", False)),
+    )
 
     await audit.log(
         action="token_refresh",

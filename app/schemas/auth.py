@@ -23,6 +23,11 @@ class UserBrief(BaseModel):
     role: str
     areas: list[str]
     avatar_tone: str | None = None
+    # R5 · REQ-17: contexto organizacional para el ruteo backoffice/app y el
+    # alcance scopeado en el cliente.
+    nodo_id: str | None = None
+    rol_nivel: str | None = None
+    es_campo: bool = False
 
 
 class RefreshRequest(BaseModel):

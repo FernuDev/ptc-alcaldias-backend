@@ -32,6 +32,7 @@ from app.routers import (
     monitor,
     notificaciones,
     obras,
+    org,
     plania,
     publico,
     reportes,
@@ -141,6 +142,7 @@ app.include_router(uploads.router, prefix=PREFIX)
 app.include_router(documentos.router, prefix=PREFIX)
 app.include_router(publico.router, prefix=PREFIX)
 app.include_router(plania.router, prefix=PREFIX)
+app.include_router(org.router, prefix=PREFIX)
 app.include_router(config.router, prefix=PREFIX)
 app.include_router(cierres.router, prefix=PREFIX)
 app.include_router(mensajes.router, prefix=PREFIX)

@@ -32,6 +32,8 @@ def create_access_token(
     tenant_id: str,
     role: str,
     areas: list[str],
+    nodo_id: str | None = None,
+    es_campo: bool = False,
 ) -> str:
     now = datetime.now(UTC)
     payload = {
@@ -39,6 +41,10 @@ def create_access_token(
         "tenant_id": tenant_id,
         "role": role,
         "areas": areas,
+        # R5 · REQ-17: contexto organizacional (informativo; la autorización
+        # se resuelve sobre el User vivo, no sobre el token).
+        "nodo_id": nodo_id,
+        "es_campo": es_campo,
         "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),

@@ -2,11 +2,37 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditLogger, compute_changes
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.security import hash_password
 from app.models.categoria import Categoria
+from app.models.org_nodo import NIVELES_CAMPO, OrgNodo
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
+
+
+async def _resolve_nodo(
+    db: AsyncSession, tenant_id: str, nodo_id: str | None
+) -> OrgNodo | None:
+    """Valida que el nodo exista y pertenezca al tenant (sin confiar en el body)."""
+    if not nodo_id:
+        return None
+    result = await db.execute(
+        select(OrgNodo).where(OrgNodo.id == nodo_id, OrgNodo.tenant_id == tenant_id)
+    )
+    nodo = result.scalar_one_or_none()
+    if nodo is None:
+        raise ValidationError(
+            f"El nodo '{nodo_id}' no existe en este tenant"
+        )
+    return nodo
+
+
+def _derive_es_campo(explicit: bool | None, nodo: OrgNodo | None) -> bool:
+    if explicit is not None:
+        return explicit
+    if nodo is not None:
+        return nodo.nivel in NIVELES_CAMPO
+    return False
 
 
 async def list_users(tenant_id: str, db: AsyncSession) -> list[User]:
@@ -36,6 +62,8 @@ async def create_user(
     if existing.scalar_one_or_none():
         raise ConflictError(f"Email {data.email} ya registrado")
 
+    nodo = await _resolve_nodo(db, tenant_id, data.nodo_id)
+
     user = User(
         id=data.id,
         tenant_id=tenant_id,
@@ -46,6 +74,8 @@ async def create_user(
         role=data.role,
         avatar_tone=data.avatar_tone,
         password_hash=hash_password(data.password),
+        nodo_id=data.nodo_id,
+        es_campo=_derive_es_campo(data.es_campo, nodo),
     )
 
     if data.areas:
@@ -78,7 +108,14 @@ async def update_user(
     admin_user_id: str,
 ) -> User:
     user = await get_user(user_id, tenant_id, db)
-    old = {"nombre": user.nombre, "cargo": user.cargo, "role": user.role, "is_active": user.is_active}
+    old = {
+        "nombre": user.nombre,
+        "cargo": user.cargo,
+        "role": user.role,
+        "is_active": user.is_active,
+        "nodo_id": user.nodo_id,
+        "es_campo": user.es_campo,
+    }
 
     if data.nombre is not None:
         user.nombre = data.nombre
@@ -95,8 +132,23 @@ async def update_user(
             select(Categoria).where(Categoria.id.in_(data.areas))
         )
         user.areas = list(cats_result.scalars().all())
+    if data.nodo_id is not None:
+        nodo = await _resolve_nodo(db, tenant_id, data.nodo_id)
+        user.nodo_id = data.nodo_id
+        # Si no se especifica es_campo, re-derivar del nuevo nodo.
+        if data.es_campo is None:
+            user.es_campo = _derive_es_campo(None, nodo)
+    if data.es_campo is not None:
+        user.es_campo = data.es_campo
 
-    new = {"nombre": user.nombre, "cargo": user.cargo, "role": user.role, "is_active": user.is_active}
+    new = {
+        "nombre": user.nombre,
+        "cargo": user.cargo,
+        "role": user.role,
+        "is_active": user.is_active,
+        "nodo_id": user.nodo_id,
+        "es_campo": user.es_campo,
+    }
     changes = compute_changes(old, new)
 
     await audit.log(

@@ -31,6 +31,15 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Habilita el acceso a conocimiento de nivel "reservado" en el Agente Institucional.
     puede_ver_reservado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # R5 · REQ-17: posición del usuario en el árbol organizacional. El alcance
+    # (sub-árbol visible) y rol_nivel se derivan de este nodo.
+    nodo_id: Mapped[str | None] = mapped_column(
+        String(40), ForeignKey("org_nodos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # true => personal de campo (jefe de cuadrilla / integrante): solo app móvil,
+    # se le niega el backoffice. false => backoffice (del JUD hacia arriba).
+    es_campo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     tenant = relationship("Tenant", back_populates="users", lazy="selectin")
     areas = relationship("Categoria", secondary=user_areas, lazy="selectin")
+    nodo = relationship("OrgNodo", lazy="selectin", foreign_keys=[nodo_id])

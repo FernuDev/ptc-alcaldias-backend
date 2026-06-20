@@ -13,6 +13,7 @@ from app.models.compromiso import Compromiso
 from app.models.contratista import Contratista
 from app.models.cuadrilla import Cuadrilla, Integrante, cuadrilla_especialidades
 from app.models.notificacion import Notificacion
+from app.models.org_nodo import Capacidad, OrgNodo, nodo_capacidades
 from app.models.obra import (
     Obra,
     ObraCalleAfectada,
@@ -59,6 +60,9 @@ __all__ = [
     "ObraDocumento",
     "ObraEvidencia",
     "Notificacion",
+    "OrgNodo",
+    "Capacidad",
+    "nodo_capacidades",
     "AuditLog",
     "RefreshToken",
     "AgenteInteraccion",

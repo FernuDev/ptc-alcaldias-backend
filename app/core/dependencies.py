@@ -23,6 +23,8 @@ class TokenPayload:
         self.tenant_id: str = data["tenant_id"]
         self.role: str = data["role"]
         self.areas: list[str] = data.get("areas", [])
+        self.nodo_id: str | None = data.get("nodo_id")
+        self.es_campo: bool = data.get("es_campo", False)
 
 
 async def get_current_user(
@@ -91,6 +93,30 @@ def require_permission(*perms: Permission | str):
     return _check
 
 
+async def require_backoffice(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Niega el backoffice al personal de campo (R5 · REQ-17).
+
+    Del JUD hacia arriba (``es_campo == False``) → backoffice. Del jefe de
+    cuadrilla hacia abajo (``es_campo == True``) → solo app móvil.
+    """
+    if getattr(user, "es_campo", False):
+        raise ForbiddenError(
+            "El personal de campo opera desde la app móvil, no desde el backoffice"
+        )
+    return user
+
+
+async def require_campo(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Permite la app de campo solo a personal de campo (``es_campo == True``)."""
+    if not getattr(user, "es_campo", False):
+        raise ForbiddenError("Esta sección es exclusiva del personal de campo")
+    return user
+
+
 async def get_audit_logger(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -102,6 +128,13 @@ async def get_audit_logger(
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(require_role("admin"))]
+# Alta/baja de usuarios y edición del organigrama: Alcalde / Administrador de
+# plataforma. En el modelo de roles actual ambos son el rol "admin".
+OrgAdminUser = Annotated[User, Depends(require_role("admin"))]
+# Usuario con acceso al backoffice (no es personal de campo).
+BackofficeUser = Annotated[User, Depends(require_backoffice)]
+# Usuario de campo (app móvil).
+CampoUser = Annotated[User, Depends(require_campo)]
 DB = Annotated[AsyncSession, Depends(get_db)]
 Audit = Annotated[AuditLogger, Depends(get_audit_logger)]
 

@@ -48,10 +48,18 @@ _NIVELES_POR_ROL: dict[RolConceptual, list[NivelVisibilidad]] = {
 def derive_contexto(user: User) -> UsuarioContexto:
     """Construye el contexto de permisos a partir del usuario autenticado."""
     # Mapeo rol real -> rol conceptual + alcance.
+    nodo = getattr(user, "nodo", None)
     if user.role == "admin":
         rol: RolConceptual = "administrador"
         alcance: AlcanceDatos = "global"
-    else:  # director_area (único otro rol existente hoy)
+    elif nodo and nodo.nivel in ("alcalde", "dir_general"):
+        # R5 · Fase 4: el alcance del agente se hereda de la posición en el árbol.
+        rol = "administrador"
+        alcance = "global"
+    elif nodo and nodo.nivel in ("jefe_cuadrilla", "coordinacion"):
+        rol = "supervisor"
+        alcance = "cuadrilla"
+    else:  # director_area / jud / subdireccion
         rol = "director"
         alcance = "direccion_completa"
 
@@ -67,7 +75,8 @@ def derive_contexto(user: User) -> UsuarioContexto:
         id=user.id,
         tenant_id=user.tenant_id,
         rol=rol,
-        direccion=user.cargo,
+        # Direccion real desde el nodo del árbol (fallback al cargo de texto).
+        direccion=nodo.nombre if nodo else user.cargo,
         alcance_datos=alcance,
         areas=[a.id for a in user.areas],
         niveles_visibles=niveles,

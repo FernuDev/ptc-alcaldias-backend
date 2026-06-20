@@ -84,6 +84,22 @@ async def _visibilidad(user: User, db: AsyncSession) -> _Scope:
     if user.role == "admin":
         return _Scope(nivel="global", cuadrilla_ids=None)
 
+    # R5 · Fase 4: con el RBAC heredado encendido, el alcance se deriva del árbol.
+    # El desempeño global solo es visible desde Administración y Finanzas / Alcalde;
+    # el resto ve su sub-árbol (sin ver a sus pares).
+    from app.core.scoping import (
+        es_nodo_transversal_global,
+        is_global_scope,
+        rbac_heredado_activo,
+        user_scope_cuadrilla_ids,
+    )
+
+    if rbac_heredado_activo() and user.nodo_id:
+        if is_global_scope(user) or es_nodo_transversal_global(user):
+            return _Scope(nivel="global", cuadrilla_ids=None)
+        ids = await user_scope_cuadrilla_ids(db, user) or []
+        return _Scope(nivel="area", cuadrilla_ids=ids, areas=[])
+
     # Director de área / supervisor: equipo de su(s) área(s) (visión ejecutiva).
     if has_permission(user.role, Permission.EJECUTIVO_VER):
         area_ids = [a.id for a in user.areas]
