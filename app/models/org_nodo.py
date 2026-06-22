@@ -107,6 +107,10 @@ class OrgNodo(TimestampMixin, Base):
     nivel: Mapped[str] = mapped_column(String(20))  # ver NIVELES
     tipo: Mapped[str] = mapped_column(String(20))  # ver TIPOS
     nombre: Mapped[str] = mapped_column(String(160))
+    # Titular (persona) que ocupa el puesto. Es solo dato de display para el
+    # organigrama; NO implica una cuenta de usuario (los titulares reales de la
+    # alcaldía no necesariamente operan el backoffice).
+    titular: Mapped[str | None] = mapped_column(String(160), nullable=True)
     orden: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0")
     activo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # Enlace opcional a una cuadrilla real (cuando tipo='cuadrilla').

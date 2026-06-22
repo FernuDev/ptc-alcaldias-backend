@@ -152,6 +152,7 @@ def _to_read(nodo: OrgNodo, caps: list[NodoCapacidadRead]) -> OrgNodoRead:
         nivel=nodo.nivel,
         tipo=nodo.tipo,
         nombre=nodo.nombre,
+        titular=nodo.titular,
         orden=nodo.orden,
         activo=nodo.activo,
         cuadrilla_id=nodo.cuadrilla_id,
@@ -374,6 +375,7 @@ async def create_nodo(
         nivel=data.nivel,
         tipo=data.tipo,
         nombre=data.nombre.strip(),
+        titular=(data.titular or "").strip() or None,
         orden=data.orden,
         cuadrilla_id=data.cuadrilla_id,
     )
@@ -427,6 +429,8 @@ async def update_nodo(
 
     if data.nombre is not None:
         nodo.nombre = data.nombre.strip()
+    if data.titular is not None:
+        nodo.titular = data.titular.strip() or None
     if data.nivel is not None:
         nodo.nivel = data.nivel
     if data.tipo is not None:

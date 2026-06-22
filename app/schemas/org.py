@@ -44,6 +44,7 @@ class OrgNodoRead(BaseModel):
     nivel: str
     tipo: str
     nombre: str
+    titular: str | None = None  # persona titular del puesto (solo display)
     orden: int = 0
     activo: bool = True
     cuadrilla_id: str | None = None
@@ -60,6 +61,7 @@ class OrgNodoCreate(BaseModel):
     nivel: str = Field(pattern=_NIVEL_PATTERN)
     tipo: str = Field(pattern=_TIPO_PATTERN)
     nombre: str = Field(min_length=1, max_length=160)
+    titular: str | None = Field(None, max_length=160)
     orden: int = 0
     cuadrilla_id: str | None = Field(None, max_length=10)
     capacidades: list[NodoCapacidadInput] = []
@@ -67,6 +69,7 @@ class OrgNodoCreate(BaseModel):
 
 class OrgNodoUpdate(BaseModel):
     nombre: str | None = Field(None, min_length=1, max_length=160)
+    titular: str | None = Field(None, max_length=160)
     nivel: str | None = Field(None, pattern=_NIVEL_PATTERN)
     tipo: str | None = Field(None, pattern=_TIPO_PATTERN)
     orden: int | None = None
