@@ -661,27 +661,52 @@ async def apply_template(
         nombre="Alcalde", orden=0,
     )
 
-    if con_dir_general:
-        contenedor = await _insert_template_nodo(
-            db, tenant_id, parent_id=alcalde.id, nivel="dir_general",
-            tipo="direccion", nombre="Dirección General", orden=0,
-        )
-        padre_direcciones = contenedor.id
-    else:
-        padre_direcciones = alcalde.id
+    # ADQ-02 · REQ-17: las 8 grandes SON Direcciones Generales y cuelgan directo
+    # del Alcalde. No hay un nodo contenedor "Dirección General" intermedio. En
+    # la plantilla genérica de municipio se usa dir_area como raíz operativa.
+    nivel_direccion = "dir_general" if con_dir_general else "dir_area"
+    rama_demo_hecha = False
 
     for i, d in enumerate(_DIRECCIONES_CDMX):
         direccion = await _insert_template_nodo(
-            db, tenant_id, parent_id=padre_direcciones, nivel="dir_area",
+            db, tenant_id, parent_id=alcalde.id, nivel=nivel_direccion,
             tipo="direccion", nombre=d["nombre"], orden=i, caps=d.get("caps"),
         )
-        for j, jud_nombre in enumerate(d.get("juds", [])):
+        juds = d.get("juds", [])
+        if not juds:
+            continue
+
+        # Regla de jerarquía: jud ∈ {dir_area, subdireccion}. En cdmx_estandar la
+        # dirección es una Dirección General, así que las JUD cuelgan de una
+        # Dirección de Área intermedia (ADQ-02). En municipio_comun la dirección
+        # ya es dir_area: las JUD cuelgan directo de ella (sin intermedio, para
+        # no anidar dir_area dentro de dir_area).
+        if con_dir_general:
+            area = await _insert_template_nodo(
+                db, tenant_id, parent_id=direccion.id, nivel="dir_area",
+                tipo="direccion", nombre=f"Dirección de Área · {d['nombre']}", orden=0,
+            )
+            base_parent = area.id
+        else:
+            base_parent = direccion.id
+        for j, jud_nombre in enumerate(juds):
+            jud_parent = base_parent
+            # En la primera JUD de la plantilla CDMX se intercala además una
+            # Subdirección, para demostrar la cadena completa de 8 niveles:
+            # Alcalde → DG → Dir. de Área → Subdirección → JUD → Coordinación →
+            # Cuadrilla.
+            if j == 0 and con_dir_general and not rama_demo_hecha:
+                sub = await _insert_template_nodo(
+                    db, tenant_id, parent_id=base_parent, nivel="subdireccion",
+                    tipo="subdireccion", nombre="Subdirección Operativa", orden=0,
+                )
+                jud_parent = sub.id
+                rama_demo_hecha = True
             jud = await _insert_template_nodo(
-                db, tenant_id, parent_id=direccion.id, nivel="jud", tipo="unidad",
+                db, tenant_id, parent_id=jud_parent, nivel="jud", tipo="unidad",
                 nombre=f"JUD {jud_nombre}", orden=j, caps={"cuadrillas": "usa"},
             )
-            # Para la primera JUD, instanciar la rama completa hasta cuadrilla
-            # (demuestra los 8 niveles de la plantilla CDMX estándar).
+            # La primera JUD instancia la rama hasta cuadrilla.
             if j == 0:
                 coord = await _insert_template_nodo(
                     db, tenant_id, parent_id=jud.id, nivel="coordinacion",

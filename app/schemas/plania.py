@@ -161,8 +161,12 @@ class ConectorInterop(BaseModel):
     id: str
     nombre: str
     descripcion: str
-    estado: str  # disponible | on-demand
+    estado: str  # disponible | on-demand | no_contratado
     categoria: str
+    # ADQ-03 · REQ-01 · R5.5: integración elevada a prioritaria (se destaca y se
+    # ancla al inicio del catálogo). `nota` documenta la sincronización y el plan.
+    prioritaria: bool = False
+    nota: str | None = None
 
 
 # ── Capa de Coordinación ────────────────────────────────────────────────────

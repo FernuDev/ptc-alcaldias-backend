@@ -64,6 +64,30 @@ async def _nodos_por_nombre(db: AsyncSession, tenant_id: str) -> dict[str, OrgNo
     return {n.nombre: n for n in rows.scalars().all()}
 
 
+async def _ensure_area(
+    db: AsyncSession, tenant_id: str, direccion: OrgNodo,
+    nodos: dict[str, OrgNodo],
+) -> OrgNodo:
+    """Dirección de Área que sostiene las JUD de una Dirección General.
+
+    Regla de jerarquía: jud ∈ {dir_area, subdireccion}, por lo que una JUD no
+    puede colgar directo de una Dirección General (ADQ-02). Reutiliza la
+    Dirección de Área que sembró la plantilla (mismo nombre) o la crea.
+    """
+    area_nombre = f"Dirección de Área · {direccion.nombre}"
+    existente = nodos.get(area_nombre)
+    if existente is not None:
+        return existente
+    area = OrgNodo(
+        id=str(uuid.uuid4()), tenant_id=tenant_id, parent_id=direccion.id,
+        nivel="dir_area", tipo="direccion", nombre=area_nombre, orden=0,
+    )
+    db.add(area)
+    await db.flush()
+    nodos[area_nombre] = area
+    return area
+
+
 async def _ensure_jud(
     db: AsyncSession, tenant_id: str, direccion: OrgNodo, jud_nombre: str,
     nodos: dict[str, OrgNodo],
@@ -72,8 +96,14 @@ async def _ensure_jud(
     existente = nodos.get(jud_nombre)
     if existente is not None:
         return existente
+    # Si la dirección es una Dirección General, intercalar una Dirección de Área
+    # como padre válido de la JUD (jud ∈ {dir_area, subdireccion}); si ya es
+    # dir_area/subdireccion, la JUD cuelga directo de ella.
+    padre = direccion
+    if direccion.nivel == "dir_general":
+        padre = await _ensure_area(db, tenant_id, direccion, nodos)
     jud = OrgNodo(
-        id=str(uuid.uuid4()), tenant_id=tenant_id, parent_id=direccion.id,
+        id=str(uuid.uuid4()), tenant_id=tenant_id, parent_id=padre.id,
         nivel="jud", tipo="unidad", nombre=jud_nombre, orden=50,
     )
     db.add(jud)

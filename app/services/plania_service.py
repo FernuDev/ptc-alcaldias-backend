@@ -662,7 +662,18 @@ async def resolver_aprobacion(
 #   disponible  → conector listo para desplegar bajo contrato.
 #   on-demand   → se construye a demanda (alcance cotizable).
 #   no_contratado → no incluido en el contrato actual.
+#
+# ADQ-03 · REQ-01 · R5.5: SUAC se eleva a integración PRIORITARIA. La Dirección
+# de Servicios Urbanos rinde cuentas en SUAC, así que el catálogo lo destaca y
+# lo ancla al inicio; `prioritaria=True` + `nota` documentan la sincronización
+# bidireccional (evitar doble captura) y la integración real planeada para R5.5.
 CATALOGO_INTEROP: list[dict] = [
+    {"id": "suac", "nombre": "SUAC", "categoria": "Atención", "estado": "no_contratado",
+     "prioritaria": True,
+     "descripcion": "Sistema Unificado de Atención Ciudadana del Gobierno CDMX. "
+                    "La Dirección de Servicios Urbanos rinde cuentas en SUAC.",
+     "nota": "Integración prioritaria: sincronización bidireccional de reportes "
+             "con SUAC para no capturar doble. Integración real planeada para R5.5."},
     {"id": "sacmex", "nombre": "SACMEX", "categoria": "Agua", "estado": "on-demand",
      "descripcion": "Sistema de Aguas de la CDMX: tomas, fugas y facturación."},
     {"id": "cfe", "nombre": "CFE", "categoria": "Energía", "estado": "on-demand",
@@ -671,6 +682,4 @@ CATALOGO_INTEROP: list[dict] = [
      "descripcion": "Centro de Comando, Control, C4i4: cámaras y emergencias."},
     {"id": "finanzas", "nombre": "Finanzas / Tesorería", "categoria": "Pagos", "estado": "disponible",
      "descripcion": "Secretaría de Administración y Finanzas: predial e ingresos."},
-    {"id": "suac", "nombre": "SUAC", "categoria": "Atención", "estado": "no_contratado",
-     "descripcion": "Sistema Unificado de Atención Ciudadana del Gobierno CDMX."},
 ]
