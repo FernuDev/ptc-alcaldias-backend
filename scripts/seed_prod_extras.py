@@ -33,6 +33,7 @@ from seed import (  # noqa: E402
     COMPROMISOS_BASE,
     DAY_MS,
     NOW_MS,
+    TENANT_PREFIX,
     TENANTS,
     TRAMITES_BASE,
     _ms_to_dt,
@@ -43,7 +44,9 @@ NOW = datetime.now(timezone.utc)
 
 
 def _prefix(tenant_id: str) -> str:
-    return "MC" if tenant_id == "magdalena-contreras" else "TL"
+    # Mapa canónico de seed.py; fallback robusto para tenants nuevos
+    # (evita que un tenant desconocido colisione con el prefijo "TL").
+    return TENANT_PREFIX.get(tenant_id, tenant_id[:2].upper())
 
 
 # ── Plan.IA: portafolio + plan de trabajo ───────────────────────────────────

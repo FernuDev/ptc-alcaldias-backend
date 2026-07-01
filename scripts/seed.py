@@ -110,10 +110,12 @@ DAY_MS = 24 * 3_600_000
 REPORTES_SEED = 20260520
 REPORTES_TOTAL_MC = 720
 REPORTES_TOTAL_TL = 1_280
+REPORTES_TOTAL_IZ = 1_600  # Iztapalapa: la demarcación más poblada de la CDMX.
 
 OBRAS_SEED = 7745312
 OBRAS_TOTAL_MC = 38
 OBRAS_TOTAL_TL = 52
+OBRAS_TOTAL_IZ = 64
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Catalogos (exact replica of catalogos.ts)
@@ -215,7 +217,31 @@ TENANTS = [
         "poblacion": 699928,
         "area_km2": Decimal("304.99"),
     },
+    {
+        "id": "iztapalapa",
+        "nombre": "Alcaldía Iztapalapa",
+        "nombre_corto": "Iztapalapa",
+        "clave_geo": "09007",
+        "acronimo": "IZ",
+        "bbox": [-99.140017, 19.284956, -98.960448, 19.400736],
+        "center": [-99.050233, 19.342846],
+        "polygon_path": "/geo/iztapalapa.geojson",
+        "escudo_path": "/escudos/iztapalapa.svg",
+        "primario": "#6C2C91",
+        "secundario": "#C1268E",
+        "dorado": "#BC955C",
+        "poblacion": 1835486,
+        "area_km2": Decimal("116.67"),
+    },
 ]
+
+# Prefijo corto por tenant (ids de cuadrillas, folios, compromisos, reportes,
+# obras…). Generaliza el seed a N alcaldías sin ramas hardcodeadas MC/TL.
+TENANT_PREFIX: dict[str, str] = {
+    "magdalena-contreras": "MC",
+    "tlalpan": "TL",
+    "iztapalapa": "IZ",
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Users
@@ -247,6 +273,17 @@ USERS = [
     {"id": "tl-supervisor",     "tenant_id": "tlalpan", "email": "mariana.cardenas@tlalpan.cdmx.gob.mx", "nombre": "Lic. Mariana C\u00e1rdenas", "iniciales": "MC", "cargo": "Subdirecci\u00f3n de Atenci\u00f3n Ciudadana",            "role": "supervisor",     "areas": [],                        "avatar_tone": None},
     {"id": "tl-jefe-cuadrilla", "tenant_id": "tlalpan", "email": "hugo.ramirez@tlalpan.cdmx.gob.mx",     "nombre": "Hugo Ram\u00edrez",         "iniciales": "HR", "cargo": "Jefatura de Cuadrilla \u00b7 Alumbrado",              "role": "jefe_cuadrilla", "areas": ["alumbrado", "semaforos"],"avatar_tone": None},
     {"id": "tl-inspector",      "tenant_id": "tlalpan", "email": "lourdes.vega@tlalpan.cdmx.gob.mx",     "nombre": "Arq. Lourdes Vega",         "iniciales": "LV", "cargo": "Inspecci\u00f3n de Calidad",                          "role": "inspector",      "areas": [],                        "avatar_tone": None},
+    # IZ \u2500\u2500 Iztapalapa (alcaldesa Aleida Alavez Ruiz, 2024-2027)
+    {"id": "iz-admin",          "tenant_id": "iztapalapa", "email": "aleida.alavez@iztapalapa.cdmx.gob.mx",  "nombre": "Aleida Alavez Ruiz",        "iniciales": "AA", "cargo": "Alcaldesa \u00b7 Iztapalapa",                          "role": "admin",         "areas": [],                         "avatar_tone": "#6C2C91"},
+    {"id": "iz-dir-obras",      "tenant_id": "iztapalapa", "email": "marco.rivera@iztapalapa.cdmx.gob.mx",   "nombre": "Ing. Marco Antonio Rivera", "iniciales": "MR", "cargo": "Direcci\u00f3n General de Obras y Desarrollo Urbano", "role": "director_area", "areas": ["bacheo"],                 "avatar_tone": None},
+    {"id": "iz-dir-alumbrado",  "tenant_id": "iztapalapa", "email": "veronica.salgado@iztapalapa.cdmx.gob.mx","nombre": "Ing. Ver\u00f3nica Salgado", "iniciales": "VS", "cargo": "Servicios Urbanos \u00b7 Alumbrado y Sem\u00e1foros", "role": "director_area", "areas": ["alumbrado", "semaforos"], "avatar_tone": None},
+    {"id": "iz-dir-agua",       "tenant_id": "iztapalapa", "email": "hugo.mendoza@iztapalapa.cdmx.gob.mx",    "nombre": "Ing. Hugo Mendoza",         "iniciales": "HM", "cargo": "Direcci\u00f3n de Agua Potable y Drenaje",          "role": "director_area", "areas": ["agua", "drenaje"],        "avatar_tone": None},
+    {"id": "iz-dir-limpia",     "tenant_id": "iztapalapa", "email": "norma.valdes@iztapalapa.cdmx.gob.mx",    "nombre": "Lic. Norma Vald\u00e9s",     "iniciales": "NV", "cargo": "Servicios Urbanos \u00b7 Limpia y V\u00eda P\u00fablica", "role": "director_area", "areas": ["limpia", "comercio_vp"],  "avatar_tone": None},
+    {"id": "iz-dir-parques",    "tenant_id": "iztapalapa", "email": "daniel.cruz@iztapalapa.cdmx.gob.mx",     "nombre": "Bi\u00f3l. Daniel Cruz",     "iniciales": "DC", "cargo": "Medio Ambiente \u00b7 Parques y Arbolado",         "role": "director_area", "areas": ["parques", "arboles"],     "avatar_tone": None},
+    {"id": "iz-dir-seguridad",  "tenant_id": "iztapalapa", "email": "oscar.beltran@iztapalapa.cdmx.gob.mx",   "nombre": "Mtro. \u00d3scar Beltr\u00e1n","iniciales": "OB", "cargo": "Direcci\u00f3n de Seguridad Ciudadana",            "role": "director_area", "areas": ["seguridad"],              "avatar_tone": None},
+    {"id": "iz-supervisor",     "tenant_id": "iztapalapa", "email": "raul.espinoza@iztapalapa.cdmx.gob.mx",   "nombre": "C. Ra\u00fal Espinoza",      "iniciales": "RE", "cargo": "Supervisi\u00f3n de Cuadrillas \u00b7 Servicios Urbanos", "role": "supervisor",    "areas": [],                         "avatar_tone": None},
+    {"id": "iz-jefe-cuadrilla", "tenant_id": "iztapalapa", "email": "joseluis.maya@iztapalapa.cdmx.gob.mx",   "nombre": "C. Jos\u00e9 Luis Maya",     "iniciales": "JM", "cargo": "Jefatura de Cuadrilla \u00b7 Bacheo",               "role": "jefe_cuadrilla","areas": ["bacheo"],                 "avatar_tone": None},
+    {"id": "iz-inspector",      "tenant_id": "iztapalapa", "email": "brenda.aguilar@iztapalapa.cdmx.gob.mx",  "nombre": "C. Brenda Aguilar",         "iniciales": "BA", "cargo": "Inspecci\u00f3n de V\u00eda P\u00fablica",            "role": "inspector",     "areas": [],                         "avatar_tone": None},
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -328,7 +365,56 @@ COLONIAS_TL: list[dict] = [
     _c("tl-fuentes-brotantes",     "Fuentes Brotantes",                 "colonia",  -99.16,  19.282,  78,  8600, 2310, 110, "14410", "94/92/99/68", 1.05, "tlalpan"),
 ]
 
-ALL_COLONIAS = COLONIAS_MC + COLONIAS_TL
+COLONIAS_IZ: list[dict] = [
+    # Centro · barrios originarios + Escuadrón 201
+    _c("iz-barrio-san-lucas",      "Barrio San Lucas",          "barrio",  -99.0895, 19.3548,  38,  9200, 2450, 242, "09000", "92/95/100/66", 1.05, "iztapalapa"),
+    _c("iz-barrio-san-pablo",      "Barrio San Pablo",          "barrio",  -99.0918, 19.3560,  34,  8400, 2240, 247, "09000", "91/94/100/64", 1.05, "iztapalapa"),
+    _c("iz-barrio-san-pedro",      "Barrio San Pedro",          "barrio",  -99.0872, 19.3535,  30,  7300, 1950, 243, "09000", "92/95/100/65", 1.00, "iztapalapa"),
+    _c("iz-barrio-san-miguel",     "Barrio San Miguel",         "barrio",  -99.0848, 19.3512,  32,  7800, 2080, 244, "09360", "90/93/99/63",  1.08, "iztapalapa"),
+    _c("iz-barrio-san-jose",       "Barrio San José",           "barrio",  -99.0902, 19.3582,  28,  6700, 1790, 239, "09000", "91/94/100/64", 1.00, "iztapalapa"),
+    _c("iz-barrio-san-ignacio",    "Barrio San Ignacio",        "barrio",  -99.0935, 19.3540,  26,  6300, 1680, 242, "09000", "90/93/99/62",  1.05, "iztapalapa"),
+    _c("iz-barrio-santa-barbara",  "Barrio Santa Bárbara",      "barrio",  -99.0880, 19.3592,  30,  7400, 1970, 247, "09000", "92/95/100/66", 1.00, "iztapalapa"),
+    _c("iz-barrio-la-asuncion",    "Barrio La Asunción",        "barrio",  -99.0908, 19.3605,  33,  8100, 2160, 245, "09000", "91/94/100/65", 1.05, "iztapalapa"),
+    _c("iz-escuadron-201",         "Escuadrón 201",             "colonia", -99.0730, 19.3560,  58, 12900, 3440, 222, "09060", "93/96/100/70", 0.95, "iztapalapa"),
+    # Cerro de la Estrella
+    _c("iz-el-santuario",          "El Santuario",              "colonia", -99.0830, 19.3460,  64, 14200, 3780, 222, "09820", "85/90/99/58",  1.20, "iztapalapa"),
+    _c("iz-estrella-del-sur",      "Estrella del Sur",          "colonia", -99.0760, 19.3465,  58, 12800, 3410, 221, "09820", "84/89/98/56",  1.20, "iztapalapa"),
+    _c("iz-lomas-de-la-estrella",  "Lomas de la Estrella",      "colonia", -99.0930, 19.3470,  72, 16400, 4370, 228, "09890", "82/87/98/54",  1.25, "iztapalapa"),
+    _c("iz-ampliacion-santuario",  "Ampliación El Santuario",   "colonia", -99.0805, 19.3445,  42,  9400, 2500, 224, "09829", "83/88/98/55",  1.22, "iztapalapa"),
+    _c("iz-constitucion-1917",     "Constitución de 1917",      "colonia", -99.0875, 19.3430, 110, 24600, 6560, 224, "09260", "90/93/99/66",  1.05, "iztapalapa"),
+    # Oriente · grandes unidades habitacionales y pueblos
+    _c("iz-uh-vicente-guerrero",   "U.H. Vicente Guerrero",     "unidad_habitacional", -99.0455, 19.3770, 165, 48000, 12800, 291, "09200", "93/97/100/76", 0.90, "iztapalapa"),
+    _c("iz-ejercito-de-oriente",   "Ejército de Oriente (Indeco-ISSSTE)", "unidad_habitacional", -99.0400, 19.3725, 120, 32000, 8530, 267, "09230", "94/98/100/78", 0.85, "iztapalapa"),
+    _c("iz-ermita-zaragoza",       "U.H. Ermita Zaragoza",      "unidad_habitacional", -99.0350, 19.3690,  96, 26500, 7070, 276, "09180", "92/96/100/74", 0.95, "iztapalapa"),
+    _c("iz-santa-martha-acatitla", "Santa Martha Acatitla",     "pueblo",  -99.0250, 19.3625, 145, 22800, 6080, 157, "09510", "84/88/98/55",  1.20, "iztapalapa"),
+    _c("iz-reforma-politica",      "Reforma Política",          "colonia", -99.0280, 19.3475,  78, 16900, 4510, 217, "09730", "86/90/98/58",  1.15, "iztapalapa"),
+    _c("iz-santa-maria-aztahuacan","Santa María Aztahuacán",    "pueblo",  -99.0320, 19.3580, 168, 28400, 7570, 169, "09500", "82/86/97/52",  1.25, "iztapalapa"),
+    _c("iz-santa-cruz-meyehualco", "U.H. Santa Cruz Meyehualco","unidad_habitacional", -99.0490, 19.3565, 110, 27300, 7280, 248, "09290", "92/96/100/72", 0.95, "iztapalapa"),
+    _c("iz-san-sebastian-tecoloxtitla", "San Sebastián Tecoloxtitla", "pueblo", -99.0540, 19.3630, 64, 11200, 2990, 175, "09520", "85/89/98/56", 1.15, "iztapalapa"),
+    _c("iz-leyes-de-reforma",      "Leyes de Reforma 1a Sección","colonia", -99.0740, 19.3775,  92, 20400, 5440, 222, "09310", "91/95/100/70", 1.00, "iztapalapa"),
+    # Sierra de Santa Catarina
+    _c("iz-xalpa",                 "Xalpa",                     "colonia", -99.0430, 19.3345,  95, 21800, 5810, 229, "09640", "80/86/98/52",  1.25, "iztapalapa"),
+    _c("iz-san-juan-xalpa",        "San Juan Xalpa",            "colonia", -99.0590, 19.3415,  88, 19400, 5170, 220, "09850", "81/87/98/53",  1.22, "iztapalapa"),
+    _c("iz-san-miguel-teotongo",   "San Miguel Teotongo",       "colonia", -99.0330, 19.3460, 210, 42000, 11200, 200, "09630", "75/82/97/48", 1.35, "iztapalapa"),
+    _c("iz-buenavista",            "Buenavista",                "colonia", -99.0380, 19.3340,  72, 15600, 4160, 217, "09700", "78/84/97/50",  1.30, "iztapalapa"),
+    _c("iz-desarrollo-urbano-quetzalcoatl", "Desarrollo Urbano Quetzalcóatl", "colonia", -99.0450, 19.3300, 130, 28200, 7520, 217, "09700", "79/85/98/51", 1.28, "iztapalapa"),
+    _c("iz-miravalle",             "Miravalle",                 "colonia", -99.0550, 19.3375,  66, 14300, 3810, 217, "09696", "80/86/98/52",  1.25, "iztapalapa"),
+    _c("iz-consejo-agrarista-mexicano", "Consejo Agrarista Mexicano", "colonia", -99.0350, 19.3415, 84, 18100, 4830, 215, "09760", "77/84/97/49", 1.30, "iztapalapa"),
+    # Culhuacán · San Lorenzo Tezonco
+    _c("iz-san-lorenzo-tezonco",   "San Lorenzo Tezonco",       "pueblo",  -99.0770, 19.3230, 230, 34000, 9070, 148, "09790", "86/90/98/58",  1.15, "iztapalapa"),
+    _c("iz-pueblo-culhuacan",      "San Antonio Culhuacán",     "pueblo",  -99.1000, 19.3360,  92, 18400, 4900, 200, "09800", "90/94/99/66",  1.00, "iztapalapa"),
+    _c("iz-san-andres-tomatlan",   "San Andrés Tomatlán",       "pueblo",  -99.0950, 19.3350,  96, 16800, 4480, 175, "09870", "87/91/99/60",  1.10, "iztapalapa"),
+    _c("iz-citlalli",              "Citlalli",                  "colonia", -99.0625, 19.3305,  70, 15400, 4110, 220, "09660", "85/90/98/57",  1.15, "iztapalapa"),
+]
+
+ALL_COLONIAS = COLONIAS_MC + COLONIAS_TL + COLONIAS_IZ
+
+# Colonias por tenant (selección de reportes/obras). Generaliza a N alcaldías.
+TENANT_COLONIAS: dict[str, list[dict]] = {
+    "magdalena-contreras": COLONIAS_MC,
+    "tlalpan": COLONIAS_TL,
+    "iztapalapa": COLONIAS_IZ,
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Reporte generator  (exact port of reportes.ts)
@@ -618,8 +704,8 @@ def _generate_timeline(reporte_id: str, estado: str, creacion_ms: int,
 def generate_reportes_for_tenant(tenant_id: str, seed: int, total: int) -> list[dict]:
     """Generate all reportes for a tenant. Returns list of reporte dicts."""
     rand = mulberry32(seed)
-    colonias = COLONIAS_MC if tenant_id == "magdalena-contreras" else COLONIAS_TL
-    prefix = "TL" if tenant_id == "tlalpan" else "MC"
+    colonias = TENANT_COLONIAS[tenant_id]
+    prefix = TENANT_PREFIX[tenant_id]
     reportes = []
 
     for i in range(total):
@@ -738,6 +824,22 @@ ZONA_HOTSPOTS_TL: list[dict] = [
     {"categoria": "limpia",    "colonia_id": "tl-centro",              "count": 8},
 ]
 
+ZONA_HOTSPOTS_IZ: list[dict] = [
+    {"categoria": "bacheo",    "colonia_id": "iz-san-miguel-teotongo",          "count": 14},
+    {"categoria": "agua",      "colonia_id": "iz-buenavista",                   "count": 12},
+    {"categoria": "drenaje",   "colonia_id": "iz-santa-maria-aztahuacan",       "count": 11},
+    {"categoria": "alumbrado", "colonia_id": "iz-desarrollo-urbano-quetzalcoatl","count": 10},
+    {"categoria": "limpia",    "colonia_id": "iz-xalpa",                        "count": 9},
+    {"categoria": "arboles",   "colonia_id": "iz-lomas-de-la-estrella",         "count": 8},
+]
+
+# Focos de zona por tenant (clusters deterministas para el Expediente de zona).
+TENANT_HOTSPOTS: dict[str, list[dict]] = {
+    "magdalena-contreras": ZONA_HOTSPOTS_MC,
+    "tlalpan": ZONA_HOTSPOTS_TL,
+    "iztapalapa": ZONA_HOTSPOTS_IZ,
+}
+
 
 def _cluster_coord(
     center_lng: float, center_lat: float, rand, radius_deg: float = 0.0010
@@ -765,10 +867,10 @@ def generate_zona_hotspots_for_tenant(tenant_id: str, seed: int) -> list[dict]:
     Mismo esquema de dict que ``generate_reportes_for_tenant`` para reutilizar la
     inserción. Ids ``{prefix}-RC-Z###`` para no colisionar con los aleatorios."""
     rand = mulberry32(seed)
-    colonias = COLONIAS_MC if tenant_id == "magdalena-contreras" else COLONIAS_TL
+    colonias = TENANT_COLONIAS[tenant_id]
     by_id = {c["id"]: c for c in colonias}
-    prefix = "TL" if tenant_id == "tlalpan" else "MC"
-    specs = ZONA_HOTSPOTS_MC if tenant_id == "magdalena-contreras" else ZONA_HOTSPOTS_TL
+    prefix = TENANT_PREFIX[tenant_id]
+    specs = TENANT_HOTSPOTS[tenant_id]
 
     reportes: list[dict] = []
     seq = 0
@@ -1534,8 +1636,8 @@ def _generate_obra_evidencias(obra_id: str, estado: str, fecha_inicio_ms: int, r
 def generate_obras_for_tenant(tenant_id: str, seed: int, total: int) -> list[dict]:
     """Generate all obras for a tenant."""
     rand = mulberry32(seed)
-    colonias = COLONIAS_MC if tenant_id == "magdalena-contreras" else COLONIAS_TL
-    prefix = "TL" if tenant_id == "tlalpan" else "MC"
+    colonias = TENANT_COLONIAS[tenant_id]
+    prefix = TENANT_PREFIX[tenant_id]
     obras = []
 
     for i in range(total):
@@ -1749,7 +1851,10 @@ async def seed_all():
                 ON CONFLICT (id) DO NOTHING
             """), col)
         await session.commit()
-        print(f"         {len(ALL_COLONIAS)} colonias ({len(COLONIAS_MC)} MC + {len(COLONIAS_TL)} TL)")
+        print(
+            f"         {len(ALL_COLONIAS)} colonias ({len(COLONIAS_MC)} MC + "
+            f"{len(COLONIAS_TL)} TL + {len(COLONIAS_IZ)} IZ)"
+        )
 
         # ── 7. Users ─────────────────────────────────────────────────────
         print("[7/11] Seeding users...")
@@ -1800,7 +1905,7 @@ async def seed_all():
         # ── 8. Cuadrillas ────────────────────────────────────────────────
         print("[8/11] Seeding cuadrillas...")
         cuadrilla_esp_rows = []
-        tenant_prefixes = [("magdalena-contreras", "MC"), ("tlalpan", "TL")]
+        tenant_prefixes = [(t["id"], TENANT_PREFIX[t["id"]]) for t in TENANTS]
         cuadrilla_count = 0
         for tenant_id, prefix in tenant_prefixes:
             for c in CUADRILLAS:
@@ -1833,7 +1938,8 @@ async def seed_all():
         print("[9/11] Generating and seeding obras...")
         obras_mc = generate_obras_for_tenant("magdalena-contreras", OBRAS_SEED, OBRAS_TOTAL_MC)
         obras_tl = generate_obras_for_tenant("tlalpan", OBRAS_SEED + 11, OBRAS_TOTAL_TL)
-        all_obras = obras_mc + obras_tl
+        obras_iz = generate_obras_for_tenant("iztapalapa", OBRAS_SEED + 23, OBRAS_TOTAL_IZ)
+        all_obras = obras_mc + obras_tl + obras_iz
 
         for o in all_obras:
             await session.execute(text("""
@@ -1934,13 +2040,16 @@ async def seed_all():
                 """), ev)
 
         await session.commit()
-        print(f"         {len(all_obras)} obras ({len(obras_mc)} MC + {len(obras_tl)} TL)")
+        print(
+            f"         {len(all_obras)} obras ({len(obras_mc)} MC + "
+            f"{len(obras_tl)} TL + {len(obras_iz)} IZ)"
+        )
 
         # ── 9b. Compromisos de gobierno ───────────────────────────────────
         print("[9b]  Seeding compromisos de gobierno...")
         n_compromisos = 0
         for t in TENANTS:
-            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            prefix = TENANT_PREFIX[t["id"]]
             for idx, c in enumerate(COMPROMISOS_BASE):
                 cid = f"{prefix}-CMP-{str(idx + 1).zfill(2)}"
                 fecha_objetivo = _ms_to_dt(NOW_MS + c["dias_objetivo"] * DAY_MS)
@@ -1970,7 +2079,7 @@ async def seed_all():
         print("[9b-2] Seeding trámites y servicios...")
         n_tramites = 0
         for t in TENANTS:
-            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            prefix = TENANT_PREFIX[t["id"]]
             for idx, tr in enumerate(TRAMITES_BASE):
                 tid = f"{prefix}-TRM-{str(idx + 1).zfill(2)}"
                 dependencia = f"{tr['dependencia']} · {t['nombre_corto']}"
@@ -2005,7 +2114,7 @@ async def seed_all():
         print("[9b-3] Seeding avisos y campañas...")
         n_avisos = 0
         for t in TENANTS:
-            prefix = "MC" if t["id"] == "magdalena-contreras" else "TL"
+            prefix = TENANT_PREFIX[t["id"]]
             for idx, av in enumerate(AVISOS_BASE):
                 aid = f"{prefix}-AVI-{str(idx + 1).zfill(2)}"
                 fecha = _ms_to_dt(NOW_MS + av["dias_offset"] * DAY_MS)
@@ -2054,27 +2163,32 @@ async def seed_all():
         print("[10/11] Generating and seeding reportes...")
         reportes_mc = generate_reportes_for_tenant("magdalena-contreras", REPORTES_SEED, REPORTES_TOTAL_MC)
         reportes_tl = generate_reportes_for_tenant("tlalpan", REPORTES_SEED + 31, REPORTES_TOTAL_TL)
+        reportes_iz = generate_reportes_for_tenant("iztapalapa", REPORTES_SEED + 61, REPORTES_TOTAL_IZ)
         # Focos densos para el Expediente de zona (Plan.IA): clusters deterministas
         # que superan el umbral por defecto, para que la demo muestre varias zonas.
         hotspots_mc = generate_zona_hotspots_for_tenant("magdalena-contreras", REPORTES_SEED + 101)
         hotspots_tl = generate_zona_hotspots_for_tenant("tlalpan", REPORTES_SEED + 131)
+        hotspots_iz = generate_zona_hotspots_for_tenant("iztapalapa", REPORTES_SEED + 161)
         reportes_mc += hotspots_mc
         reportes_tl += hotspots_tl
-        all_reportes = reportes_mc + reportes_tl
+        reportes_iz += hotspots_iz
+        all_reportes = reportes_mc + reportes_tl + reportes_iz
 
         await insert_reportes(session, all_reportes)
 
         await session.commit()
         print(
-            f"         {len(all_reportes)} reportes ({len(reportes_mc)} MC + {len(reportes_tl)} TL) "
-            f"· incluye {len(hotspots_mc) + len(hotspots_tl)} en focos de zona"
+            f"         {len(all_reportes)} reportes ({len(reportes_mc)} MC + {len(reportes_tl)} TL "
+            f"+ {len(reportes_iz)} IZ) · incluye "
+            f"{len(hotspots_mc) + len(hotspots_tl) + len(hotspots_iz)} en focos de zona"
         )
 
         # ── Reporte-Obra links ────────────────────────────────────────────
         print("         Linking reportes to obras...")
         links_mc = link_reportes_to_obras(reportes_mc, obras_mc, REPORTES_SEED)
         links_tl = link_reportes_to_obras(reportes_tl, obras_tl, REPORTES_SEED + 31)
-        all_links = links_mc + links_tl
+        links_iz = link_reportes_to_obras(reportes_iz, obras_iz, REPORTES_SEED + 61)
+        all_links = links_mc + links_tl + links_iz
 
         for reporte_id, obra_id in all_links:
             await session.execute(text("""
@@ -2278,21 +2392,34 @@ async def seed_campo(session, all_reportes: list[dict]) -> None:
     import json
     import uuid as _uuid
 
-    existing = await session.execute(text("SELECT count(*) FROM integrantes"))
-    if (existing.scalar() or 0) > 0:
-        print("         integrantes ya existen, se omite el seed de campo.")
+    # Idempotencia por-tenant: solo sembramos campo para los tenants que aún no
+    # tienen integrantes (p.ej. una alcaldía recién añadida). Así un re-seed
+    # incorpora el módulo de campo del tenant nuevo sin duplicar el de los
+    # existentes — las tareas/ubicaciones usan uuids no deterministas y no se
+    # pueden re-insertar de forma idempotente.
+    seeded = (await session.execute(
+        text("SELECT DISTINCT tenant_id FROM integrantes")
+    )).fetchall()
+    seeded_tenants = {r[0] for r in seeded}
+    pending_tenants = [t["id"] for t in TENANTS if t["id"] not in seeded_tenants]
+    if not pending_tenants:
+        print("         integrantes ya existen para todos los tenants, se omite.")
         return
 
     rand = _campo_rand(20260618)
 
-    # Cuadrillas reales de la DB (id, tenant_id).
+    # Cuadrillas reales de la DB (id, tenant_id) de los tenants pendientes.
     cuad_rows = (await session.execute(
-        text("SELECT id, tenant_id FROM cuadrillas ORDER BY tenant_id, id")
+        text("SELECT id, tenant_id FROM cuadrillas WHERE tenant_id = ANY(:tids) "
+             "ORDER BY tenant_id, id"),
+        {"tids": pending_tenants},
     )).fetchall()
 
     # Jefes de cuadrilla disponibles por tenant (para vincular user_id).
     jefe_rows = (await session.execute(
-        text("SELECT id, tenant_id FROM users WHERE role = 'jefe_cuadrilla'")
+        text("SELECT id, tenant_id FROM users WHERE role = 'jefe_cuadrilla' "
+             "AND tenant_id = ANY(:tids)"),
+        {"tids": pending_tenants},
     )).fetchall()
     jefes_por_tenant: dict[str, list[str]] = {}
     for uid, tid in jefe_rows:
@@ -2358,9 +2485,10 @@ async def seed_campo(session, all_reportes: list[dict]) -> None:
         SELECT id, tenant_id, cuadrilla_id, categoria_id, titulo, lat, lng, colonia_id, prioridad
         FROM reportes
         WHERE cuadrilla_id IS NOT NULL AND estado IN ('asignado', 'en_proceso')
+          AND tenant_id = ANY(:tids)
         ORDER BY fecha_creacion DESC
         LIMIT 50
-    """))).fetchall()
+    """), {"tids": pending_tenants})).fetchall()
 
     for i, (rid, tenant_id, cuad_id, categoria_id, titulo, lat, lng, colonia_id, prioridad) in enumerate(rep_rows):
         estado = TAREA_ESTADOS[i % len(TAREA_ESTADOS)]
