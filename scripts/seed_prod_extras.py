@@ -202,14 +202,19 @@ async def seed_config(session) -> int:
 
 
 async def seed_plania(session) -> tuple[int, int]:
-    ya = (await session.execute(text("SELECT count(*) FROM proyectos"))).scalar() or 0
-    if ya:
-        print(f"         proyectos ya existen ({ya}), se omite Plan.IA.")
-        return 0, 0
+    # Idempotencia POR-TENANT: siembra Plan.IA solo para tenants que aún no
+    # tienen proyectos (p.ej. una alcaldía recién añadida). Un guard global
+    # dejaría sin proyectos a cualquier tenant nuevo si otro ya los tiene.
+    seeded = set((await session.execute(
+        text("SELECT DISTINCT tenant_id FROM proyectos"))).scalars().all())
     tenants = (await session.execute(
         text("SELECT id FROM tenants ORDER BY id"))).scalars().all()
+    pending = [t for t in tenants if t not in seeded]
+    if not pending:
+        print("         proyectos ya existen para todos los tenants, se omite Plan.IA.")
+        return 0, 0
     n_pry = n_tareas = 0
-    for tid in tenants:
+    for tid in pending:
         prefix = _prefix(tid)
         for i, (nombre, tipo, estado, prio, avance, pres, pdm, area, liga) in enumerate(PROYECTOS):
             pid = f"{prefix}-PRY-{str(i + 1).zfill(2)}"
@@ -309,14 +314,21 @@ async def seed_tareas_desde_reportes(session, abiertas_por_tenant: int = 60) -> 
       'resueltos / tiempo medio / %SLA' por persona se atribuyen vía
       ``Tarea.integrante_id`` + ``Tarea.reporte_id`` sobre reportes ya cerrados.
 
-    Idempotente: no corre si ya hay tareas; ids deterministas TK-/TKC-<reporte_id>.
+    Idempotente POR-TENANT: solo siembra para tenants que aún no tienen tareas
+    DERIVADAS DE REPORTES (ids deterministas TK-/TKC-<reporte_id>). Se filtra por
+    esos ids —y no por cualquier tarea— para no confundirse con las pocas tareas
+    que `seed_campo` ya crea (uuids): así un tenant nuevo recibe también sus tareas
+    cerradas (TKC-), que alimentan los scorecards de desempeño.
     """
-    if (await session.execute(text("SELECT count(*) FROM tareas"))).scalar():
-        return 0
+    seeded = set((await session.execute(
+        text("SELECT DISTINCT tenant_id FROM tareas WHERE id LIKE 'TK%'"))).scalars().all())
     tenants = (await session.execute(
         text("SELECT id FROM tenants ORDER BY id"))).scalars().all()
+    pending = [t for t in tenants if t not in seeded]
+    if not pending:
+        return 0
     n = 0
-    for tid in tenants:
+    for tid in pending:
         cuads = (await session.execute(
             text("SELECT id FROM cuadrillas WHERE tenant_id=:t ORDER BY id"),
             {"t": tid})).scalars().all()

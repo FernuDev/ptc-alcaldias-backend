@@ -16,6 +16,7 @@ Reads DATABASE_URL from .env or environment.  Safe to run repeatedly
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import sys
@@ -1461,16 +1462,61 @@ def _avance_por_estado(estado: str, rand) -> int:
     return 100  # concluida
 
 
-def _calle_coords(calle_id: str, clng: float, clat: float) -> str:
-    """Polilínea corta determinista cerca del centro de la obra, como JSON string
-    (placeholder de geometría de calle afectada; el frontend la dibuja como
-    cierre vial).
+# ── Grafo de calles reales (segmentos OSM ruteados por colonia) ─────────────
+# Generado por el frontend (`scripts/build-road-network.mjs`) desde Overpass y
+# copiado a `scripts/data/obras-streets.json`. Forma:
+#   { tenant_id: { colonia_id: [{ name, coordinates:[[lng,lat]…], lengthM,
+#                                 crossStreets:[str] }] } }
+def _load_obras_streets() -> dict:
+    p = Path(__file__).resolve().parent / "data" / "obras-streets.json"
+    try:
+        with p.open(encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as exc:
+        print(f"[calles] no se pudo cargar obras-streets.json ({exc}); "
+              f"se usará geometría sintética de respaldo.")
+        return {}
 
-    Usa su propio RNG sembrado por el id de la calle, así que NO consume del
-    `rand` del seed y la secuencia determinista del resto no cambia.
+
+OBRAS_STREETS: dict = _load_obras_streets()
+
+
+def _pick_real_segment(
+    tenant_id: str, colonia_id: str, calle_id: str,
+    exclude_names: set[str] | None = None,
+) -> dict | None:
+    """Elige un segmento vial REAL para la colonia de la obra (cae al pool global
+    del tenant si la colonia no tiene segmentos; None si no hay datos).
+
+    Determinista por `calle_id` (hash → índice de arranque), así que no consume
+    del `rand` del seed. Si `exclude_names` trae nombres ya usados por la misma
+    obra, sondea linealmente para preferir una calle con nombre distinto.
+    """
+    tenant_streets = OBRAS_STREETS.get(tenant_id) or {}
+    pool = tenant_streets.get(colonia_id) or []
+    if not pool:
+        pool = [s for segs in tenant_streets.values() for s in segs]
+    if not pool:
+        return None
+    import hashlib
+
+    start = int(hashlib.md5(calle_id.encode()).hexdigest()[:8], 16) % len(pool)
+    exclude_names = exclude_names or set()
+    for off in range(len(pool)):
+        seg = pool[(start + off) % len(pool)]
+        if seg.get("name") not in exclude_names:
+            return seg
+    return pool[start]  # todas excluidas (pool pequeño): cae al índice base
+
+
+def _calle_coords(calle_id: str, clng: float, clat: float) -> str:
+    """Polilínea corta determinista cerca del centro de la obra, como JSON string.
+
+    Respaldo cuando no hay segmento vial real disponible para la colonia (p.ej.
+    tenant sin grafo en obras-streets.json). Usa su propio RNG sembrado por el id
+    de la calle, así que NO consume del `rand` del seed.
     """
     import hashlib
-    import json
     import random as _random
 
     r = _random.Random(int(hashlib.md5(calle_id.encode()).hexdigest()[:8], 16))
@@ -1487,36 +1533,54 @@ def _calle_coords(calle_id: str, clng: float, clat: float) -> str:
 
 
 def _generate_calles_afectadas(
-    obra_id: str, estado: str, rand, base_lng: float = 0.0, base_lat: float = 0.0
+    obra_id: str, estado: str, rand, tenant_id: str, colonia_id: str,
+    base_lng: float = 0.0, base_lat: float = 0.0,
 ) -> list[dict]:
-    """Generate calles afectadas.
+    """Genera las calles afectadas de una obra.
 
-    Note: the TS version uses a precomputed street graph (obras-streets.json)
-    to pick real segments via pickRealSegments. Since that 60k-token JSON is not
-    available here, we generate placeholder calles and consume rand calls in a
-    compatible cadence. The obras PRNG sequence therefore differs from the TS
-    frontend, but it is still fully deterministic within this seed script.
+    Cada calle toma un SEGMENTO VIAL REAL del grafo OSM de su colonia
+    (`_pick_real_segment`): geometría que sigue el trazo real de la calle, nombre
+    real y calles alternas (cruces reales). Si no hay grafo para el tenant/colonia,
+    cae a la polilínea sintética `_calle_coords`.
+
+    El consumo de `rand` es idéntico al histórico (desired + 3 por calle: estado,
+    inicio, fin); la selección de segmento es determinista por id y NO usa `rand`,
+    así que el resto de los campos de la obra no cambian.
     """
     activas = estado not in ("planeacion", "licitacion", "concluida")
     if not activas:
-        # Still consume the rand calls the TS would make for segment picking
-        rand()  # for desiredCalles calculation
+        rand()  # mantiene la cadencia del PRNG (cálculo de desiredCalles)
         return []
     desired = 1 + math.floor(rand() * 3)
     calles = []
+    used_names: set[str] = set()
     for ci in range(desired):
+        calle_id = f"{obra_id}-CA{ci + 1}"
         cierre_estado = CIERRE_ESTADOS[math.floor(rand() * len(CIERRE_ESTADOS))]
         inicio_ms = NOW_MS - rand() * 30 * DAY_MS
         fin_ms = inicio_ms + (5 + rand() * 35) * DAY_MS
+
+        seg = _pick_real_segment(tenant_id, colonia_id, calle_id, used_names)
+        if seg and seg.get("coordinates"):
+            nombre = seg["name"]
+            used_names.add(nombre)
+            coordenadas = json.dumps(seg["coordinates"])
+            cruces = [c for c in (seg.get("crossStreets") or []) if c][:2]
+            alternativas = json.dumps(cruces) if cruces else None
+        else:
+            nombre = f"Calle afectada {ci + 1}"
+            coordenadas = _calle_coords(calle_id, base_lng, base_lat)
+            alternativas = None
+
         calles.append({
-            "id": f"{obra_id}-CA{ci + 1}",
+            "id": calle_id,
             "obra_id": obra_id,
-            "nombre": f"Calle afectada {ci + 1}",
+            "nombre": nombre,
             "estado": cierre_estado,
-            "coordenadas": _calle_coords(f"{obra_id}-CA{ci + 1}", base_lng, base_lat),
+            "coordenadas": coordenadas,
             "fecha_inicio": _ms_to_dt(inicio_ms),
             "fecha_fin_estimada": _ms_to_dt(fin_ms),
-            "alternativas_viales": None,
+            "alternativas_viales": alternativas,
         })
     return calles
 
@@ -1652,9 +1716,10 @@ def generate_obras_for_tenant(tenant_id: str, seed: int, total: int) -> list[dic
 
         contratista_id = None if estado == "planeacion" else CONTRATISTAS[math.floor(rand() * len(CONTRATISTAS))]["id"]
 
-        # Generate center and calles (simplified -- no street graph)
+        # Genera calles afectadas con geometría vial REAL (grafo OSM por colonia).
         calles = _generate_calles_afectadas(
             f"{prefix}-OB-{str(i + 1).zfill(3)}", estado, rand,
+            tenant_id, colonia["id"],
             colonia["center_lng"], colonia["center_lat"],
         )
         center_lng, center_lat = _jitter_coord(colonia["center_lng"], colonia["center_lat"], colonia["area_ha"], rand, factor=0.7)
@@ -2011,8 +2076,12 @@ async def seed_all():
             for ca in o["calles_afectadas"]:
                 await session.execute(text("""
                     INSERT INTO obra_calles_afectadas (id, obra_id, nombre, estado, coordenadas, fecha_inicio, fecha_fin_estimada, alternativas_viales)
-                    VALUES (:id, :obra_id, :nombre, :estado, CAST(:coordenadas AS jsonb), :fecha_inicio, :fecha_fin_estimada, :alternativas_viales)
-                    ON CONFLICT (id) DO NOTHING
+                    VALUES (:id, :obra_id, :nombre, :estado, CAST(:coordenadas AS jsonb), :fecha_inicio, :fecha_fin_estimada, CAST(:alternativas_viales AS jsonb))
+                    ON CONFLICT (id) DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        estado = EXCLUDED.estado,
+                        coordenadas = EXCLUDED.coordenadas,
+                        alternativas_viales = EXCLUDED.alternativas_viales
                 """), ca)
 
             # Timeline

@@ -32,9 +32,15 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-# Aplica migraciones pendientes antes de arrancar (idempotente: si no hay
-# pendientes, no hace nada). Así el esquema de la BD siempre coincide con el
-# código desplegado. Las migraciones son aditivas (tablas/columnas nuevas).
-# Se usa `python -m alembic` (no el script `alembic`) para que el cwd (/app)
-# entre al sys.path aunque PYTHONPATH no estuviera.
-CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Arranque:
+#  1. Migraciones BLOQUEANTES (schema listo antes de servir). Si fallan, aborta
+#     el deploy (esquema incorrecto = no arrancar). `python -m alembic` mete el
+#     cwd (/app) al sys.path aunque PYTHONPATH no estuviera.
+#  2. Seed idempotente (seed.py + seed_org.py) en SEGUNDO PLANO. Converge los
+#     datos demo (todos los tenants) sin bloquear el arranque: uvicorn liga el
+#     puerto de inmediato, así el healthcheck de Railway no mata el deploy a
+#     mitad del seed (lo que dejó datos parciales antes). Idempotente
+#     (ON CONFLICT), así que re-sembrar en cada deploy es seguro. Sus logs van
+#     al stdout del contenedor (visibles en Railway).
+#  3. uvicorn como proceso principal (exec → PID 1).
+CMD ["sh", "-c", "python -m alembic upgrade head || exit 1; { python scripts/seed.py && python scripts/seed_org.py; } & exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
